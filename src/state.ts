@@ -135,6 +135,9 @@ export class LeagueBroadcastState {
 			this.styleSets.pregame,
 			this.styleSets.ingame,
 			this.styleSets.postgame,
+			// Team names feed the setGameWinner dropdown labels.
+			this.blueTeamName,
+			this.redTeamName,
 		])
 	}
 

@@ -32,13 +32,36 @@ import { createCinematicsRpc, type CinematicsRpc } from '../vendor/generated/cin
 export type RpcConnectionEvent = 'connected' | 'disconnected' | 'reconnecting' | 'reconnect-failed' | 'invalid-url'
 
 /**
- * Application-level heartbeat: probe method + interval. The wire method matches
- * the generated ping stub (`ping.echo` in src/vendor/generated/ping-rpc.ts),
- * which is also the runtime's default — pinned here so a future default change
- * in the runtime cannot silently break the heartbeat.
+ * Remote-only application-level heartbeat. Loopback sockets do not need a
+ * liveness probe; remote sockets can otherwise remain half-open after a network
+ * path silently disappears. The wire method matches the generated ping stub
+ * (`ping.echo` in src/vendor/generated/ping-rpc.ts).
  */
 const HEARTBEAT_METHOD = 'ping.echo'
 const HEARTBEAT_INTERVAL_MS = 15_000
+
+/**
+ * Whether a configured host is unambiguously loopback without doing DNS.
+ * Hostnames that merely resolve to loopback stay on the conservative remote
+ * path because resolving here would make connection setup asynchronous.
+ */
+export function isLoopbackHost(host: string): boolean {
+	const normalized = host
+		.trim()
+		.toLowerCase()
+		.replace(/^\[|\]$/g, '')
+		.replace(/\.$/, '')
+	const address = normalized.split('%', 1)[0] // strip an IPv6 zone id
+
+	return (
+		address === 'localhost' ||
+		address.endsWith('.localhost') ||
+		/^127(?:\.\d{1,3}){3}$/.test(address) ||
+		address === '::1' ||
+		address === '0:0:0:0:0:0:0:1' ||
+		/^::ffff:127(?:\.\d{1,3}){3}$/.test(address)
+	)
+}
 
 const TIER_MESSAGE = 'Companion control requires the LeagueBroadcast Basic tier'
 const AUTH_MESSAGE = 'This connection needs a pairing token (LeagueBroadcast Settings → Remote Control)'
@@ -139,7 +162,7 @@ function decodePlaybackPlaying(raw: Uint8Array): boolean {
  * integration tests can drive reconnect/heartbeat cycles in milliseconds.
  * Production callers (main.ts) omit this — the values documented in `connect()`
  * apply (1 s base exponential backoff capped at 30 s, 250 ms jitter, Infinity
- * attempts, 15 s heartbeat).
+ * attempts, and a 15 s heartbeat for remote hosts only).
  */
 export type RpcTuning = Partial<
 	Pick<RpcClientOptions, 'reconnectDelay' | 'maxReconnectDelay' | 'reconnectJitter' | 'heartbeatIntervalMs'>
@@ -253,7 +276,7 @@ class LeagueBroadcastRpcTransport implements LeagueBroadcastRpc {
 		const client = new RpcClient({
 			url: this.url,
 			reconnect: true, // runtime defaults: 1 s base exp backoff capped 30 s, 250 ms jitter, Infinity attempts
-			heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
+			heartbeatIntervalMs: isLoopbackHost(new URL(this.url).hostname) ? 0 : HEARTBEAT_INTERVAL_MS,
 			heartbeatMethod: HEARTBEAT_METHOD,
 			// Pairing token configured → inject the header-carrying ws socket.
 			// No token → leave the factory unset so the runtime uses the native

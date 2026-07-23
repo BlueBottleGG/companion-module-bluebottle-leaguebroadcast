@@ -347,6 +347,47 @@ export function UpdatePresets(self: ModuleInstance): void {
 
 	// --- 6. Series Control ---
 
+	for (const side of ['blue', 'red'] as const) {
+		const variableId = side === 'blue' ? 'blueTeamName' : 'redTeamName'
+		presets[`setGameWinner_${side}`] = {
+			type: 'button',
+			category: 'Series Control',
+			name: `Set the ${side} team as game winner`,
+			style: {
+				text: `WIN\n$(${self.label}:${variableId})`,
+				size: 'auto',
+				color: COLOR_WHITE,
+				bgcolor: COLOR_BLACK,
+			},
+			steps: [
+				{
+					down: [{ actionId: 'setGameWinner', options: { winner: side, gameId: '' } }],
+					up: [],
+				},
+			],
+			feedbacks: [],
+		}
+	}
+
+	presets['clearGameWinner'] = {
+		type: 'button',
+		category: 'Series Control',
+		name: 'Clear the game winner',
+		style: {
+			text: 'CLEAR\nWINNER',
+			size: 'auto',
+			color: COLOR_WHITE,
+			bgcolor: COLOR_DARK_RED,
+		},
+		steps: [
+			{
+				down: [{ actionId: 'setGameWinner', options: { winner: 'clear', gameId: '' } }],
+				up: [],
+			},
+		],
+		feedbacks: [],
+	}
+
 	presets['swapSides'] = {
 		type: 'button',
 		category: 'Series Control',

@@ -1,9 +1,9 @@
-# System Design — companion-module-league-broadcast
+# System Design — companion-module-bluebottle-leaguebroadcast
 
 Bitfocus Companion connection module for **LeagueBroadcast** (BlueBottleGG), giving broadcast
 operators Stream Deck / surface control over live League of Legends productions.
 
-Status: **rev 4 — as built (v0.2.0: remote hosts, full action surface, integration tests)** · Date: 2026-07-23 · Targets: Companion ≥ 4.2, LeagueBroadcast local API (port 58869)
+Status: **rev 6 — as built (v0.2.4: discovery/framework hardening and portal preparation)** · Date: 2026-07-23 · Targets: Companion ≥ 4.2, LeagueBroadcast local API (default port 58869)
 
 > Rev 2: transport flipped from REST+`/ws/ui` to the FlatBuffers RPC (`/ws/rpc`) after
 > confirming the app is transitioning to RPC-only and `caster_mode` is explicitly the
@@ -46,8 +46,9 @@ Status: **rev 4 — as built (v0.2.0: remote hosts, full action surface, integra
 >   documented vendored-runtime patch) for header injection + upgrade-401 detection via
 >   `unexpected-response`, three-way 401 disambiguation (invalid token / needs token / tier).
 > - **Bonjour discovery**: manifest `bonjourQueries` on `_leaguebroadcast._tcp` + a
->   `bonjour-device` config field; the advertised port is wrong in the app (80) so only the
->   address is used and 58869 assumed (app-side fix filed as a task chip).
+>   `bonjour-device` config field. At rev 3 the app still advertised port 80, so the module
+>   treated it as a legacy sentinel and used the configured fallback; v0.2.4 now advertises the
+>   live `WebAppGlobals.Port`, while retaining that fallback for older app builds.
 > - **Deferred actions landed**: `overlaySet` (REST `showing`, bare-bool legacy shape; wire
 >   names are serialization property names — `GoldGraph`, not `GoldGraphV2`; the four
 >   `Latest*` catalog entries are pseudo-overlays and excluded), `seriesSelect` +
@@ -165,7 +166,9 @@ Status: **rev 4 — as built (v0.2.0: remote hosts, full action surface, integra
   (`[RequiresFeature]`), RPC per-method (`featureProvider.HasFeature`, `RpcException.Unauthorized`
   — precedent in `CasterRemoteRpcImpl.StartSession`), WS gates, and per-catalog-button
   `MinFeature`. No per-caller credentials locally — gating rides on the app user's entitlements.
-- **Discovery**: `mdnsHostManager.cs` exists → pairs with Companion's `bonjour-device` field later.
+- **Discovery**: `MdnsHostManager` is registered as a hosted service, probes for instance-name
+  conflicts, advertises the live web port under `_leaguebroadcast._tcp`, announces explicitly,
+  and sends an mDNS goodbye during shutdown. Companion consumes it through `bonjour-device`.
 
 ### 2.2 Companion platform (current as of July 2026)
 
@@ -194,7 +197,8 @@ Status: **rev 4 — as built (v0.2.0: remote hosts, full action surface, integra
 │  Companion (≥4.2)          │            │  LeagueBroadcast app (port 58869)            │
 │ ┌────────────────────────┐ │ FlatBuffers│ ┌──────────────────────────────────────────┐ │
 │ │ companion-module-      │ │ RPC WS     │ │ /ws/rpc                                  │ │
-│ │ league-broadcast       │ │ ══════════▶│ │  caster_mode.Execute / GetConfig /       │ │
+│ │ bluebottle-            │ │ ══════════▶│ │  caster_mode.Execute / GetConfig /       │ │
+│ │ leaguebroadcast        │ │            │ │                                          │ │
 │ │                        │ │            │ │    GetActiveOverlays                     │ │
 │ │  main.ts (lifecycle)   │ │            │ │  caster_mode.SubscribePanelState  (NEW)  │ │
 │ │  client/rpc.ts         │ │            │ │  status.Subscribe…            (NEW/opt)  │ │
@@ -294,9 +298,9 @@ Keep the template's file layout (Companion reviewers expect it), grow folders wh
 bloat — the vMix module pattern:
 
 ```
-companion-module-league-broadcast/
+companion-module-bluebottle-leaguebroadcast/
 ├── companion/
-│   ├── manifest.json        # id: league-broadcast, runtime node22, api nodejs-ipc
+│   ├── manifest.json        # id: bluebottle-leaguebroadcast, legacy: league-broadcast
 │   └── HELP.md              # setup, tier requirement, action/feedback/variable reference
 ├── src/
 │   ├── main.ts              # ModuleInstance: lifecycle, orchestration only
@@ -456,7 +460,8 @@ Categories mirror the broadcast run-of-show so a new user can drag a whole page 
 - **Stay on base ~1.14.1 / API 1.14 (Companion 4.2+) for v1.** Companion 5.0 is two weeks old;
   the production install base is 4.x. Migrate to base 2.x as a minor release once 5.x adoption
   is broad — frozen IDs make that cheap.
-- Manifest: `id: league-broadcast`, repo `bitfocus/companion-module-league-broadcast` (fork
+- Manifest: `id: bluebottle-leaguebroadcast`, repo
+  `bitfocus/companion-module-bluebottle-leaguebroadcast` (fork
   workflow), keywords `league of legends, esports, broadcast, overlay, graphics`.
 - Release: `yarn companion-module-build` → tag → developer-portal submission. Before store
   approval, distribute the `.tgz` from our own releases page — side-loading is officially
@@ -470,10 +475,11 @@ Categories mirror the broadcast run-of-show so a new user can drag a whole page 
 
 ## 6. Reliability
 
-- **Reconnect**: provided by the RPC runtime — exponential backoff + jitter, heartbeat with
-  forced-close on timeout, and **automatic re-issue of every subscription channel** on
-  reconnect. Module maps connection events to InstanceStatus (§5.3) and re-runs the handshake
-  - snapshot fetch on `connected`. `destroy()` closes the client and clears any REST poll timer.
+- **Reconnect**: provided by the RPC runtime — exponential backoff + jitter, a 15 s heartbeat
+  with forced-close on timeout for remote hosts only (loopback relies on socket lifetime
+  events), and **automatic re-issue of every subscription channel** on reconnect. Module maps
+  connection events to InstanceStatus (§5.3) and re-runs the handshake snapshot fetch on
+  `connected`. `destroy()` closes the client and clears any REST poll timer.
 - **App restart mid-show**: reconnect → handshake → fresh `GetConfig`/`GetActiveOverlays` →
   subscriptions re-established by the runtime → rebuild variables + `checkAllFeedbacks`.
 - **Partial degradation**: if a transition REST poll fails while RPC lives, the affected
@@ -539,20 +545,34 @@ strong differentiator — no other LoL overlay tool ships an official Companion 
   test; TS runtime needed no patches (§4.2); client is vendored for now, npm publish still
   open (§4.3); `MinFeature` enforcement landed via the parallel audit session (§4.5).
 - **Phase 1 — Module v0.1.0** ✅ **done**: full scaffold + real transport + cinematics +
-  presets + HELP; packaged `league-broadcast-0.1.0.tgz` via companion-module-build. Ready for
+  presets + HELP; packaged `bluebottle-leaguebroadcast-0.1.0.tgz` via companion-module-build. Ready for
   side-load pilot once integration-tested against a live app.
 - **Phase 2 — Full surface + remote** ✅ **done (v0.2.0)**: `overlaySet`/`seriesSelect`/
   `styleSetActivate`, remote-host pairing (server + module + webui), bonjour discovery,
   mock-server integration tests (30 passing).
-- **Remaining before/at store submission**: live-app end-to-end test (manual — run the app,
-  side-load the `.tgz`, walk the preset pages), HELP.md screenshots, npm-published RPC client
-  replacing the vendored copy (plus the framework no-Origin-Bearer fix and the mDNS port fix,
-  both filed as task chips), Bitfocus developer-portal submission (requires the maintainer's
-  account).
-- **Phase 3 — Polish & de-legacy**: remote-host pairing tokens (§4.4), mDNS auto-discovery
-  (`bonjour-device`), swap each 🕘 REST fallback to its RPC twin as namespaces land, live
-  game-data variables once an RPC game-state subscription exists, base 2.x migration when
-  Companion 5 adoption justifies it.
+- **Phase 2.1 — Reliability + missing winner control** ✅ **done (v0.2.3)**: loopback sockets
+  rely on WebSocket lifetime events while the 15 s RPC heartbeat is remote-only; added the
+  roadmap-promised `setGameWinner` action (blue/red/clear, optional explicit game id), three
+  zero-config winner presets, dynamic team labels, and real-HTTP REST contract tests. Live
+  side-load passed against LeagueBroadcast 7.2.7 + Companion 4.2.5: v0.2.2 registered 23 actions,
+  set game 16's blue winner through a virtual button, then cleared it and verified the original
+  no-winner/incomplete state was restored. v0.2.3 also parses the app's structured
+  `SemanticVersion` response so `appVersion` reports `7.2.7` instead of staying blank.
+- **Phase 2.2 — Discovery/framework hardening** ✅ **done (v0.2.4)**: LeagueBroadcast now
+  advertises its configured API port under a stable `_leaguebroadcast._tcp` service type and
+  resolves instance-name conflicts without looping; the module consumes valid advertised custom
+  ports while treating legacy port 80 as a fallback sentinel. The no-Origin Bearer fix is present
+  in bluebottle-rpc (`ed14c99`) and the app submodule. Current manifest metadata, license
+  attribution, changelog, and a tag-based developer-portal checklist are prepared.
+- **Remaining before/at store submission**: obtain the official Bitfocus repository for the
+  selected `bluebottle-leaguebroadcast` id, complete the full live-app preset-page walk (the
+  connection, hotkeys, overlay rejection outside a game, and winner set/restore paths are already
+  proven), add HELP.md screenshots if requested,
+  publish the RPC client to replace the vendored copy, and submit the release tag through the
+  maintainer's developer-portal account.
+- **Phase 3 — Polish & de-legacy**: swap each 🕘 REST fallback to its RPC twin as namespaces
+  land, live game-data variables once an RPC game-state subscription exists, and base 2.x
+  migration when the minimum supported Companion version can move beyond 4.2.
 
 ## 10. What to revisit as it grows
 

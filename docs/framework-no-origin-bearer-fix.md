@@ -3,8 +3,13 @@
 Proposal for a framework fix in `external/bluebottle-rpc` (`BlueBottleClient.Rpc`), written up
 for separate implementation. Found during the Companion-module remote-host work (2026-07-23).
 
-Status: **proposal — not implemented**. A task chip ("Evaluate Bearer auth for no-Origin RPC
-peers in bluebottle-rpc") tracks it.
+Status: **implemented** (2026-07-23) — bluebottle-rpc `ed14c99` ("feat: evaluate Bearer
+pre-auth for no-Origin peers before origin policing"), rolled into leaguebroadcast via the
+`external/bluebottle-rpc` submodule bump; the synthetic-origin workaround
+(`CompanionClientOrigin` / `http://companion.bluebottle.invalid`) is removed there. This module
+needs no changes — sending both Origin and Bearer remains correct (a valid token skips origin
+policing); dropping the Origin header is optional and pinned by `src/__tests__/rpc.spec.ts:150`
+if ever done.
 
 ---
 
@@ -51,7 +56,7 @@ Because of this gap, the Companion pairing feature ships a synthetic origin:
   commit `1afd5b57`).
 - The Companion module sends **both** `Origin: http://companion.bluebottle.invalid` and
   `Authorization: Bearer <token>` when a pairing token is configured
-  (`companion-module-league-broadcast/src/client/rpc.ts`, `createPairedWebSocket`).
+  (`companion-module-bluebottle-leaguebroadcast/src/client/rpc.ts`, `createPairedWebSocket`).
 - With no token configured the module sends **no** custom headers, because a foreign Origin on
   loopback would downgrade the connection from auto-`local` to anonymous.
 

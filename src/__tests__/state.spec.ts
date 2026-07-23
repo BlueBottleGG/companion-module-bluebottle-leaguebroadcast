@@ -158,6 +158,14 @@ describe('choicesHash', () => {
 		)
 		expect(state.choicesHash()).not.toBe(before)
 	})
+
+	it('is sensitive to team-name changes used by the game-winner dropdown', () => {
+		const state = new LeagueBroadcastState()
+		state.applyPanelState(richPanelState())
+		const before = state.choicesHash()
+		state.applyPanelState(makePanelState({ ...richPanelState(), blueTeamName: 'New Blue' }))
+		expect(state.choicesHash()).not.toBe(before)
+	})
 })
 
 describe('applyPolledState', () => {

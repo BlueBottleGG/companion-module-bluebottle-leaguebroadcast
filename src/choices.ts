@@ -101,6 +101,15 @@ export const TEAM_SIDE_CHOICES: DropdownChoice[] = [
 	{ id: 1, label: 'Red' },
 ]
 
+/** Winner choices labelled with the current on-screen team names when known. */
+export function getGameWinnerChoices(state: LeagueBroadcastState): DropdownChoice[] {
+	return [
+		{ id: 'blue', label: state.blueTeamName ? `Blue — ${state.blueTeamName}` : 'Blue team' },
+		{ id: 'red', label: state.redTeamName ? `Red — ${state.redTeamName}` : 'Red team' },
+		{ id: 'clear', label: 'Clear winner' },
+	]
+}
+
 /** Dropdown of the operator's configured in-game caster buttons. */
 export function getCasterButtonChoices(state: LeagueBroadcastState): DropdownChoice[] {
 	const pageNames = new Map(state.pages.map((p) => [p.pageId, p.name]))

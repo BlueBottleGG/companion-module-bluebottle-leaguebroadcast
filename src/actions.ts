@@ -1,6 +1,7 @@
 import type { ModuleInstance } from './main.js'
 import {
 	getCasterButtonChoices,
+	getGameWinnerChoices,
 	getPageChoices,
 	getPostgameButtonChoices,
 	getSeriesChoices,
@@ -13,6 +14,7 @@ import {
 } from './choices.js'
 import {
 	RestHttpError,
+	type GameWinnerSelection,
 	type LeagueBroadcastRest,
 	type MockPhase,
 	type PostgameScope,
@@ -494,6 +496,45 @@ export function UpdateActions(self: ModuleInstance): void {
 					await rest.setBestOf(Number(event.options.bestOf ?? 3))
 				} catch (err) {
 					self.handleRestError('setBestOf', err)
+				}
+			},
+		},
+		setGameWinner: {
+			name: 'Series: Set Game Winner',
+			options: [
+				{
+					id: 'winner',
+					type: 'dropdown',
+					label: 'Winner',
+					choices: getGameWinnerChoices(self.state),
+					default: 'blue',
+				},
+				{
+					id: 'gameId',
+					type: 'textinput',
+					label: 'Game ID (empty = active/next game in current series)',
+					tooltip:
+						'Leave empty for the current series side-reference game; enter a game ID to correct a specific game (supports variables)',
+					default: '',
+					useVariables: true,
+				},
+			],
+			callback: async (event, context) => {
+				const rest = requireRest(self, 'setGameWinner')
+				if (!rest) return
+				const winner = String(event.options.winner ?? 'blue') as GameWinnerSelection
+				const gameIdText = (await context.parseVariablesInString(String(event.options.gameId ?? ''))).trim()
+				const gameId = gameIdText === '' ? undefined : Number(gameIdText)
+				if (gameId !== undefined && (!Number.isInteger(gameId) || gameId <= 0)) {
+					self.log('warn', `setGameWinner: invalid game ID "${gameIdText}"`)
+					return
+				}
+				try {
+					await rest.setGameWinner(winner, gameId)
+					// A winner can complete a series and change the dropdown/list.
+					self.requestSlowRefresh()
+				} catch (err) {
+					self.handleRestError('setGameWinner', err)
 				}
 			},
 		},

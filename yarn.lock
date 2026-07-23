@@ -1071,6 +1071,26 @@ __metadata:
   languageName: node
   linkType: hard
 
+"bluebottle-leaguebroadcast@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "bluebottle-leaguebroadcast@workspace:."
+  dependencies:
+    "@companion-module/base": "npm:~1.14.1"
+    "@companion-module/tools": "npm:^2.6.1"
+    "@types/node": "npm:^22.19.3"
+    "@types/ws": "npm:^8.18.1"
+    eslint: "npm:^9.39.2"
+    husky: "npm:^9.1.7"
+    lint-staged: "npm:^16.2.7"
+    prettier: "npm:^3.7.4"
+    rimraf: "npm:^6.1.2"
+    typescript: "npm:~5.9.3"
+    typescript-eslint: "npm:^8.51.0"
+    vitest: "npm:^4.1.10"
+    ws: "npm:^8.21.1"
+  languageName: unknown
+  linkType: soft
+
 "brace-expansion@npm:^1.1.7":
   version: 1.1.16
   resolution: "brace-expansion@npm:1.1.16"
@@ -2043,26 +2063,6 @@ __metadata:
   checksum: 10c0/61cdff9623dabf3568b6445e93e31376bee1cdb93f8ba7033d86022c2a9b1791a1d9510e026e6465ebd701a6dd2f7b0808483ad8838341ac52f003f512e0b4c4
   languageName: node
   linkType: hard
-
-"league-broadcast@workspace:.":
-  version: 0.0.0-use.local
-  resolution: "league-broadcast@workspace:."
-  dependencies:
-    "@companion-module/base": "npm:~1.14.1"
-    "@companion-module/tools": "npm:^2.6.1"
-    "@types/node": "npm:^22.19.3"
-    "@types/ws": "npm:^8.18.1"
-    eslint: "npm:^9.39.2"
-    husky: "npm:^9.1.7"
-    lint-staged: "npm:^16.2.7"
-    prettier: "npm:^3.7.4"
-    rimraf: "npm:^6.1.2"
-    typescript: "npm:~5.9.3"
-    typescript-eslint: "npm:^8.51.0"
-    vitest: "npm:^4.1.10"
-    ws: "npm:^8.21.1"
-  languageName: unknown
-  linkType: soft
 
 "levn@npm:^0.4.1":
   version: 0.4.1

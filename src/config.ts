@@ -6,7 +6,7 @@ export interface ModuleConfig {
 	/**
 	 * bonjour-device selection. Companion stores the picked announcement as
 	 * `"address:port"`; empty/null/undefined means "Manual" (use `host`).
-	 * Resolve through `resolveConfigHost` — never read this directly.
+	 * Resolve through `resolveConfigEndpoint` — never read this directly.
 	 */
 	bonjourHost?: string | null
 }
@@ -25,41 +25,52 @@ export interface ModuleSecrets {
 }
 
 /**
- * Effective host: the bonjour-discovered address when one is selected,
- * otherwise the manual `host` field.
+ * Effective endpoint: the bonjour-discovered address and advertised port when
+ * one is selected, otherwise the manual host and port fields.
  *
- * The port part of the bonjour value is deliberately IGNORED: current
- * LeagueBroadcast builds advertise `_leaguebroadcast._tcp` with a wrong port
- * (80), so only the discovered address is trusted and the configured `port`
- * (default 58869) is kept.
+ * LeagueBroadcast builds before the mDNS fix advertised port 80 regardless of
+ * their real API port. Treat that one value as a legacy sentinel and keep the
+ * configured port; valid non-80 advertisements from fixed builds are trusted.
  *
- * Port-stripping heuristic (the stored value is a plain string, so IPv6 makes
- * it ambiguous):
- * - contains `]` → bracketed IPv6 (`[fe80::1]:80` or `[fe80::1]`): the address
- *   is the bracket contents; anything after `]` is a port suffix and dropped.
+ * Parsing heuristic (the stored value is a plain string, so IPv6 makes an
+ * unbracketed host+port ambiguous):
+ * - contains `]` → bracketed IPv6 (`[fe80::1]:58869` or `[fe80::1]`).
  * - contains 2+ colons and no `]` → treat the WHOLE value as a bare IPv6 host
- *   and do NOT strip a port. `fe80::1:80` is genuinely ambiguous (it is itself
- *   a valid IPv6 address) — a wrong "port" guess would corrupt the address,
- *   while keeping it whole is correct for the common bare-address announcement.
- * - one colon → `host:port`, strip the port.
+ *   and do not infer a port.
+ * - one colon → `host:port`.
  * - no colon → bare host.
  */
-export function resolveConfigHost(config: ModuleConfig): string {
-	const bonjour = config.bonjourHost ?? ''
+export function resolveConfigEndpoint(config: ModuleConfig): { host: string; port: number } {
+	const bonjour = (config.bonjourHost ?? '').trim()
 	if (bonjour !== '') {
 		let address: string
+		let advertisedPort: number | undefined
 		const closeBracket = bonjour.indexOf(']')
 		if (closeBracket >= 0) {
 			address = bonjour.slice(bonjour.startsWith('[') ? 1 : 0, closeBracket)
+			const suffix = bonjour.slice(closeBracket + 1)
+			if (/^:\d+$/.test(suffix)) advertisedPort = Number(suffix.slice(1))
 		} else if (bonjour.indexOf(':') !== bonjour.lastIndexOf(':')) {
 			address = bonjour // bare IPv6 — see heuristic above
 		} else {
 			const cut = bonjour.lastIndexOf(':')
 			address = cut > 0 ? bonjour.slice(0, cut) : bonjour
+			if (cut > 0 && /^\d+$/.test(bonjour.slice(cut + 1))) advertisedPort = Number(bonjour.slice(cut + 1))
 		}
-		if (address !== '') return address
+		if (address !== '') {
+			const port =
+				advertisedPort !== undefined && advertisedPort >= 1 && advertisedPort <= 65535 && advertisedPort !== 80
+					? advertisedPort
+					: config.port
+			return { host: address, port }
+		}
 	}
-	return config.host
+	return { host: config.host, port: config.port }
+}
+
+/** Backwards-compatible host-only helper used by tests and external imports. */
+export function resolveConfigHost(config: ModuleConfig): string {
+	return resolveConfigEndpoint(config).host
 }
 
 /**
@@ -97,7 +108,7 @@ export function GetConfigFields(): SomeCompanionConfigField[] {
 			type: 'static-text',
 			id: 'hostFiller',
 			label: 'LeagueBroadcast Host',
-			value: 'Using the discovered address (port below still applies)',
+			value: 'Using the discovered address and port (legacy port 80 falls back to the port below)',
 			width: 8,
 			isVisibleExpression: '!!$(options:bonjourHost)',
 		},

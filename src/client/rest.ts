@@ -35,6 +35,7 @@ export function isForbiddenError(err: unknown): boolean {
 export type MockPhase = 'pregame' | 'ingame' | 'postgame'
 export type PostgameScope = 'current' | 'team' | 'player'
 export type StylePhase = 'pregame' | 'ingame' | 'postgame'
+export type GameWinnerSelection = 'blue' | 'red' | 'clear'
 
 /** One series (match) known to the app, reduced to what dropdowns and labels need. */
 export interface SeriesSummary {
@@ -99,6 +100,33 @@ function coerceString(value: unknown): string | null {
 	return null
 }
 
+/** Parse the app's SemanticVersion JSON shape or its legacy string shape. */
+function coerceVersion(value: unknown): string | null {
+	if (typeof value === 'string') return value.length > 0 ? value : null
+	if (value === null || typeof value !== 'object') return null
+	const obj = value as Record<string, unknown>
+	if (
+		typeof obj.major === 'number' &&
+		Number.isInteger(obj.major) &&
+		typeof obj.minor === 'number' &&
+		Number.isInteger(obj.minor) &&
+		typeof obj.patch === 'number' &&
+		Number.isInteger(obj.patch)
+	) {
+		const base = `${obj.major}.${obj.minor}.${obj.patch}`
+		const release =
+			typeof obj.release === 'string' && obj.release.length > 0
+				? obj.release
+				: Array.isArray(obj.releaseLabels)
+					? obj.releaseLabels
+							.filter((label): label is string => typeof label === 'string' && label.length > 0)
+							.join('.')
+					: ''
+		return release ? `${base}-${release}` : base
+	}
+	return coerceString(value)
+}
+
 /**
  * Reduce the GET api/match payload (MatchWithGamesAndTeams[]) to dropdown
  * summaries. Label preference: match name → "TeamA vs TeamB" → "Series {id}".
@@ -138,23 +166,28 @@ function parseStyleSetNames(value: unknown): string[] | null {
  * `sideReferenceGame`): active game, else first incomplete game, else the
  * first game of the series.
  */
-function pickSideReferenceGame(match: unknown): { gameId: number; teamIds: number[] } | null {
+interface GameReference {
+	gameId: number
+	teamIds: number[]
+	isActive: boolean
+	isComplete: boolean
+}
+
+function parseGameReference(game: unknown): GameReference | null {
+	if (game === null || typeof game !== 'object') return null
+	const obj = game as Record<string, unknown>
+	if (typeof obj.gameId !== 'number') return null
+	const teamIds = (Array.isArray(obj.teams) ? obj.teams : [])
+		.map((team) => (team !== null && typeof team === 'object' ? (team as Record<string, unknown>).teamId : undefined))
+		.filter((id): id is number => typeof id === 'number')
+	return { gameId: obj.gameId, teamIds, isActive: obj.isActive === true, isComplete: obj.isComplete === true }
+}
+
+function pickSideReferenceGame(match: unknown): GameReference | null {
 	if (match === null || typeof match !== 'object') return null
 	const games = (match as Record<string, unknown>).games
 	if (!Array.isArray(games)) return null
-	const parsed = games
-		.map((game) => {
-			if (game === null || typeof game !== 'object') return null
-			const obj = game as Record<string, unknown>
-			if (typeof obj.gameId !== 'number') return null
-			const teamIds = (Array.isArray(obj.teams) ? obj.teams : [])
-				.map((team) =>
-					team !== null && typeof team === 'object' ? (team as Record<string, unknown>).teamId : undefined,
-				)
-				.filter((id): id is number => typeof id === 'number')
-			return { gameId: obj.gameId, teamIds, isActive: obj.isActive === true, isComplete: obj.isComplete === true }
-		})
-		.filter((game) => game !== null)
+	const parsed = games.map(parseGameReference).filter((game) => game !== null)
 	return parsed.find((game) => game.isActive) ?? parsed.find((game) => !game.isComplete) ?? parsed[0] ?? null
 }
 
@@ -246,6 +279,40 @@ export class LeagueBroadcastRest {
 	}
 
 	/**
+	 * Confirm or clear the winner of a game. With no explicit game id this
+	 * targets the app's side-reference game (active, else first incomplete,
+	 * else first), which is the same between-games target used by the Broadcast
+	 * hub. Blue/red are resolved to the game's current side ordering at press
+	 * time, so a button remains correct after a side swap.
+	 */
+	// TRANSITION(REST): replace with a local match/game RPC twin when available
+	async setGameWinner(selection: GameWinnerSelection, gameId?: number): Promise<void> {
+		const game =
+			gameId === undefined
+				? pickSideReferenceGame(await this.request('GET', '/api/match/current'))
+				: parseGameReference(await this.request('GET', `/api/game/${gameId}`))
+		if (!game) {
+			throw new Error(
+				gameId === undefined
+					? 'No game found to set a winner on (no current series, or the series has no games)'
+					: `Game ${gameId} was not found`,
+			)
+		}
+
+		if (selection === 'clear') {
+			await this.request('DELETE', `/api/game/${game.gameId}/winner`)
+			return
+		}
+
+		const sideIndex = selection === 'blue' ? 0 : 1
+		const teamId = game.teamIds[sideIndex]
+		if (teamId === undefined) {
+			throw new Error(`Game ${game.gameId} has no ${selection} team — cannot set the winner`)
+		}
+		await this.request('PUT', `/api/game/${game.gameId}/winner/${teamId}`)
+	}
+
+	/**
 	 * Swap the blue/red sides of a series by reversing the team order of its
 	 * side-reference game — the exact operation behind the app's own Swap
 	 * Sides button (webui useCurrentMatch.swapTeamSides →
@@ -285,7 +352,7 @@ export class LeagueBroadcastRest {
 	// TRANSITION(REST): replace with RPC twin when available
 	async getVersion(): Promise<string | null> {
 		const value = await this.request('GET', '/api/status/version')
-		return coerceString(value)
+		return coerceVersion(value)
 	}
 
 	/**

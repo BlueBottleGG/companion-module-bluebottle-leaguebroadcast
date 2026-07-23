@@ -1,6 +1,6 @@
 {
-	"name": "league-broadcast",
-	"version": "0.2.0",
+	"name": "bluebottle-leaguebroadcast",
+	"version": "0.2.4",
 	"main": "dist/main.js",
 	"type": "module",
 	"scripts": {
@@ -17,7 +17,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/BlueBottleGG/companion-module-league-broadcast.git"
+		"url": "git+https://github.com/BlueBottleGG/companion-module-bluebottle-leaguebroadcast.git"
 	},
 	"engines": {
 		"node": ">=22.20",

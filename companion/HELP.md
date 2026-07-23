@@ -3,7 +3,8 @@
 Control [LeagueBroadcast](https://bluebottle.gg) League of Legends broadcast overlays from a
 Companion surface: toggle in-game overlays, switch caster pages, drive damage/objective/teamfight
 recaps, pin champion details, push post-game stat screens, control rehearsal (mock) data, and keep
-a panic "hide everything" button under your finger.
+a panic "hide everything" button under your finger. Between games it can also confirm or correct
+the game winner and swap blue/red sides without leaving the broadcast surface.
 
 ## Requirements
 
@@ -22,12 +23,12 @@ a panic "hide everything" button under your finger.
 
 ## Configuration
 
-| Setting                      | Default     | Notes                                                                                                                            |
-| ---------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| LeagueBroadcast (discovered) | Manual      | Instances found on the network via auto-discovery. Picking one fills the host automatically; "Manual" uses the Host field below. |
-| Host                         | `127.0.0.1` | Hostname or IP of the machine running LeagueBroadcast. Keep the default when Companion runs on the same machine.                 |
-| Port                         | `58869`     | The LeagueBroadcast API port. Only change if you reconfigured the app. Also applies to discovered instances.                     |
-| Pairing token (remote only)  | empty       | Only needed when Companion runs on a different machine. Leave empty on the same machine.                                         |
+| Setting                      | Default     | Notes                                                                                                                                                                                                                                                 |
+| ---------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| LeagueBroadcast (discovered) | Manual      | Instances found on the network via auto-discovery. Fixed app builds supply both host and port. Older builds advertised port 80 incorrectly; the module detects that legacy value and uses the Port field below. "Manual" uses Host and Port directly. |
+| Host                         | `127.0.0.1` | Hostname or IP of the machine running LeagueBroadcast. Keep the default when Companion runs on the same machine.                                                                                                                                      |
+| Port                         | `58869`     | LeagueBroadcast API port for manual connections and as the fallback for legacy/invalid discovery announcements.                                                                                                                                       |
+| Pairing token (remote only)  | empty       | Only needed when Companion runs on a different machine. Leave empty on the same machine.                                                                                                                                                              |
 
 ## Remote control from another machine
 
@@ -49,30 +50,31 @@ module then shows an Authentication Failure until the new token is entered.
 
 ## Actions
 
-| Action                            | What it does                                                                                                                                                                                                                                                                   |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Caster Button: Press              | Toggle/show/hide one of **your** configured caster panel buttons (dropdown mirrors the in-app panel).                                                                                                                                                                          |
-| Overlay: Show/Hide                | Toggle/show/hide a raw overlay type directly — no configured caster button needed. The latest-event recap buttons (latest damage/objective/teamfight) are event-driven and not listed here; use the recap actions below instead. Only works while a game is running or mocked. |
-| Caster Page: Switch               | Switch the active caster page.                                                                                                                                                                                                                                                 |
-| Deactivate All Overlays           | Panic button — hides every active overlay.                                                                                                                                                                                                                                     |
-| Damage Recap                      | Select the latest damage recap, or deselect it.                                                                                                                                                                                                                                |
-| Objective Recap                   | Select the latest objective recap (optionally the DPS view), or deselect it.                                                                                                                                                                                                   |
-| Teamfight Tracking                | Start/stop teamfight tracking.                                                                                                                                                                                                                                                 |
-| Teamfight Overlay                 | Select the latest teamfight overlay, or deselect it.                                                                                                                                                                                                                           |
-| Champion Detail: Pin Player       | Pin the champion detail view to a player (Blue 1–5, Red 1–5).                                                                                                                                                                                                                  |
-| Post-Game: Show Configured Button | Trigger one of the postgame buttons configured in the app.                                                                                                                                                                                                                     |
-| Post-Game: Show Component         | Push a post-game component directly (game/player/matchup/fearless-bans/player-stats) with current/team/player scope.                                                                                                                                                           |
-| Post-Game: Clear Component        | Clear the active post-game component.                                                                                                                                                                                                                                          |
-| Cinematic: Arm                    | Arm a cinematic by ID — loaded and paused at its start, ready for an instant Go.                                                                                                                                                                                               |
-| Cinematic: Go                     | Start the armed cinematic.                                                                                                                                                                                                                                                     |
-| Cinematic: Stop                   | Stop cinematic playback and tear it down.                                                                                                                                                                                                                                      |
-| Cinematic: Play                   | Play a cinematic by ID immediately (Arm + Go in one step).                                                                                                                                                                                                                     |
-| Mock Data: Set                    | Turn rehearsal (mock) data on/off per phase (pre-game/in-game/post-game).                                                                                                                                                                                                      |
-| Series: Select                    | Make a series the current one (dropdown of the app's non-completed series, refreshed every 30 s). Requires the Basic tier.                                                                                                                                                     |
-| Series: Set Best-Of               | Set the current series to Bo1/Bo3/Bo5.                                                                                                                                                                                                                                         |
-| Series: Swap Sides                | Swap blue/red sides — the same operation as the app's Swap Sides button. Leave the series ID empty for the current series, or enter one to target another (supports variables).                                                                                                |
-| Keyboard Hotkeys: Set             | Enable/disable the app's keyboard hotkeys (turn them off when the deck replaces them).                                                                                                                                                                                         |
-| Style Set: Activate               | Activate a style set for a phase (pre-game/in-game/post-game). The set dropdown is filtered by the chosen phase and refreshed every 30 s.                                                                                                                                      |
+| Action                            | What it does                                                                                                                                                                                                                                                                         |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Caster Button: Press              | Toggle/show/hide one of **your** configured caster panel buttons (dropdown mirrors the in-app panel).                                                                                                                                                                                |
+| Overlay: Show/Hide                | Toggle/show/hide a raw overlay type directly — no configured caster button needed. The latest-event recap buttons (latest damage/objective/teamfight) are event-driven and not listed here; use the recap actions below instead. Only works while a game is running or mocked.       |
+| Caster Page: Switch               | Switch the active caster page.                                                                                                                                                                                                                                                       |
+| Deactivate All Overlays           | Panic button — hides every active overlay.                                                                                                                                                                                                                                           |
+| Damage Recap                      | Select the latest damage recap, or deselect it.                                                                                                                                                                                                                                      |
+| Objective Recap                   | Select the latest objective recap (optionally the DPS view), or deselect it.                                                                                                                                                                                                         |
+| Teamfight Tracking                | Start/stop teamfight tracking.                                                                                                                                                                                                                                                       |
+| Teamfight Overlay                 | Select the latest teamfight overlay, or deselect it.                                                                                                                                                                                                                                 |
+| Champion Detail: Pin Player       | Pin the champion detail view to a player (Blue 1–5, Red 1–5).                                                                                                                                                                                                                        |
+| Post-Game: Show Configured Button | Trigger one of the postgame buttons configured in the app.                                                                                                                                                                                                                           |
+| Post-Game: Show Component         | Push a post-game component directly (game/player/matchup/fearless-bans/player-stats) with current/team/player scope.                                                                                                                                                                 |
+| Post-Game: Clear Component        | Clear the active post-game component.                                                                                                                                                                                                                                                |
+| Cinematic: Arm                    | Arm a cinematic by ID — loaded and paused at its start, ready for an instant Go.                                                                                                                                                                                                     |
+| Cinematic: Go                     | Start the armed cinematic.                                                                                                                                                                                                                                                           |
+| Cinematic: Stop                   | Stop cinematic playback and tear it down.                                                                                                                                                                                                                                            |
+| Cinematic: Play                   | Play a cinematic by ID immediately (Arm + Go in one step).                                                                                                                                                                                                                           |
+| Mock Data: Set                    | Turn rehearsal (mock) data on/off per phase (pre-game/in-game/post-game).                                                                                                                                                                                                            |
+| Series: Select                    | Make a series the current one (dropdown of the app's non-completed series, refreshed every 30 s). Requires the Basic tier.                                                                                                                                                           |
+| Series: Set Best-Of               | Set the current series to Bo1/Bo3/Bo5.                                                                                                                                                                                                                                               |
+| Series: Set Game Winner           | Set the blue/red team as winner of the active/next game in the current series, or clear the winner. Team IDs are resolved from the current side order when pressed, so the action remains correct after a side swap. An optional game ID can target a specific game for corrections. |
+| Series: Swap Sides                | Swap blue/red sides — the same operation as the app's Swap Sides button. Leave the series ID empty for the current series, or enter one to target another (supports variables).                                                                                                      |
+| Keyboard Hotkeys: Set             | Enable/disable the app's keyboard hotkeys (turn them off when the deck replaces them).                                                                                                                                                                                               |
+| Style Set: Activate               | Activate a style set for a phase (pre-game/in-game/post-game). The set dropdown is filtered by the chosen phase and refreshed every 30 s.                                                                                                                                            |
 
 ## Feedbacks
 
@@ -93,19 +95,24 @@ All feedbacks are boolean and can restyle the button when true.
 
 ## Variables
 
-| Variable                                 | Contents                                                                                                               |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `$(league-broadcast:gamePhase)`          | `outofgame` / `loading` / `ingame` / `paused` / `mocking` / `gameover` / `champselect` (`none` until the first update) |
-| `$(league-broadcast:blueTeamName)`       | Blue team name                                                                                                         |
-| `$(league-broadcast:redTeamName)`        | Red team name                                                                                                          |
-| `$(league-broadcast:currentSeries)`      | Label of the current series (match name or "Team A vs Team B"; empty when none)                                        |
-| `$(league-broadcast:activePage)`         | Active caster page name                                                                                                |
-| `$(league-broadcast:activeOverlayCount)` | Number of active overlays                                                                                              |
-| `$(league-broadcast:postgameComponent)`  | Active post-game component (empty when none)                                                                           |
-| `$(league-broadcast:hotkeysEnabled)`     | `on` / `off`                                                                                                           |
-| `$(league-broadcast:tier)`               | `ok` / `limited` (`limited` after the app rejected a gated command for tier reasons)                                   |
-| `$(league-broadcast:appVersion)`         | LeagueBroadcast version                                                                                                |
-| `$(league-broadcast:connectionState)`    | Connection state                                                                                                       |
+The examples below use the default connection label `bluebottle-leaguebroadcast`. If you rename
+the connection in Companion, use that label as the variable prefix instead. Connections migrated
+from the legacy `league-broadcast` module id keep working through the manifest's `legacyIds`
+mapping and may retain their existing connection label.
+
+| Variable                                           | Contents                                                                                                               |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `$(bluebottle-leaguebroadcast:gamePhase)`          | `outofgame` / `loading` / `ingame` / `paused` / `mocking` / `gameover` / `champselect` (`none` until the first update) |
+| `$(bluebottle-leaguebroadcast:blueTeamName)`       | Blue team name                                                                                                         |
+| `$(bluebottle-leaguebroadcast:redTeamName)`        | Red team name                                                                                                          |
+| `$(bluebottle-leaguebroadcast:currentSeries)`      | Label of the current series (match name or "Team A vs Team B"; empty when none)                                        |
+| `$(bluebottle-leaguebroadcast:activePage)`         | Active caster page name                                                                                                |
+| `$(bluebottle-leaguebroadcast:activeOverlayCount)` | Number of active overlays                                                                                              |
+| `$(bluebottle-leaguebroadcast:postgameComponent)`  | Active post-game component (empty when none)                                                                           |
+| `$(bluebottle-leaguebroadcast:hotkeysEnabled)`     | `on` / `off`                                                                                                           |
+| `$(bluebottle-leaguebroadcast:tier)`               | `ok` / `limited` (`limited` after the app rejected a gated command for tier reasons)                                   |
+| `$(bluebottle-leaguebroadcast:appVersion)`         | LeagueBroadcast version                                                                                                |
+| `$(bluebottle-leaguebroadcast:connectionState)`    | Connection state                                                                                                       |
 
 ## Presets
 
@@ -124,8 +131,8 @@ Presets are organized by broadcast phase so you can drag a whole page at a time:
 4. **Post-Game** — one tile per post-game component plus a clear button.
 5. **Cinematics** — Arm / Go / Stop tiles (fill in your cinematic ID in the Arm action) and a
    playing-status tile (green while a cinematic is live).
-6. **Series Control** — a zero-config **SWAP SIDES** tile for the current series and a current-series
-   text tile.
+6. **Series Control** — zero-config blue-win, red-win, clear-winner, and **SWAP SIDES** tiles for
+   the current series, plus a current-series text tile.
 7. **Status** — game-phase and team-name text tiles, a connection tile (green when connected), and
    a tier warning tile (red when the Basic tier is missing).
 
@@ -147,7 +154,7 @@ tier limitations never change the instance status (see the first bullet after th
 
 - **A gated button does nothing while status is OK:** the app rejected the command for tier
   reasons. The module logs an error with the app's message ("Companion control requires the
-  LeagueBroadcast Basic tier"), sets `$(league-broadcast:tier)` to `limited`, and turns the
+  LeagueBroadcast Basic tier"), sets `$(bluebottle-leaguebroadcast:tier)` to `limited`, and turns the
   **Tier Entitled** feedback false — put an inverted Tier Entitled feedback on a tile for an
   always-visible warning (the **Status** preset category ships one ready-made). After upgrading
   the tier in the app, the `limited` flag clears on the next (re)connect — disable/enable the

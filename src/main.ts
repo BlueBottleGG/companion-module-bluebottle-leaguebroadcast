@@ -1,5 +1,5 @@
 import { InstanceBase, runEntrypoint, InstanceStatus, type SomeCompanionConfigField } from '@companion-module/base'
-import { GetConfigFields, resolveConfigHost, type ModuleConfig, type ModuleSecrets } from './config.js'
+import { GetConfigFields, resolveConfigEndpoint, type ModuleConfig, type ModuleSecrets } from './config.js'
 import { UpdateVariableDefinitions } from './variables.js'
 import { UpgradeScripts } from './upgrades.js'
 import { UpdateActions } from './actions.js'
@@ -56,6 +56,8 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 	private versionFetched = false
 	/** Host the current connection cycle targets (bonjour-discovered or manual) — for status messages. */
 	private effectiveHost = ''
+	/** Port the current connection cycle targets (advertised or configured) — for status messages. */
+	private effectivePort = 0
 	/**
 	 * One-shot latch: the last connect attempt's WebSocket upgrade was rejected
 	 * with HTTP 401 (invalid pairing token). Consumed by the next 'reconnecting'
@@ -134,9 +136,7 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 
 	private setupConnection(): void {
 		this.connectionGeneration++
-		// Effective host: bonjour-discovered address when one is selected, else
-		// the manual host field (the discovered PORT is ignored — see config.ts).
-		const host = resolveConfigHost(this.config)
+		const { host, port } = resolveConfigEndpoint(this.config)
 		if (!host) {
 			// Drop any clients from the previous cycle BEFORE going BadConfig —
 			// action callbacks must find null (and log cleanly) instead of firing
@@ -152,6 +152,7 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 			return
 		}
 		this.effectiveHost = host
+		this.effectivePort = port
 		this.updateStatus(InstanceStatus.Connecting)
 
 		this.state = new LeagueBroadcastState()
@@ -162,8 +163,8 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 		this.slowPollCountdown = 0
 		this.initVariableValues()
 
-		this.rest = new LeagueBroadcastRest(host, this.config.port)
-		const rpc = createRpcClient(host, this.config.port, this.secrets.pairingToken)
+		this.rest = new LeagueBroadcastRest(host, port)
+		const rpc = createRpcClient(host, port, this.secrets.pairingToken)
 		this.rpc = rpc
 		this.commands = new LeagueBroadcastCommands(rpc)
 		rpc.onConnectionEvent = (ev, reconnectAttempt) => this.handleConnectionEvent(ev, reconnectAttempt)
@@ -250,7 +251,7 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 					// app by attempt count instead while the retry loop keeps running.
 					this.updateStatus(
 						InstanceStatus.ConnectionFailure,
-						`LeagueBroadcast not reachable at ${this.effectiveHost}:${this.config.port} — is the app running?`,
+						`LeagueBroadcast not reachable at ${this.effectiveHost}:${this.effectivePort} — is the app running?`,
 					)
 				} else {
 					this.updateStatus(InstanceStatus.Connecting)
@@ -263,7 +264,7 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 			case 'reconnect-failed':
 				this.updateStatus(
 					InstanceStatus.ConnectionFailure,
-					`LeagueBroadcast not reachable at ${this.effectiveHost}:${this.config.port} — is the app running?`,
+					`LeagueBroadcast not reachable at ${this.effectiveHost}:${this.effectivePort} — is the app running?`,
 				)
 				break
 			case 'invalid-url':
@@ -271,7 +272,7 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 				// loop is running. Only a config change starts a new cycle.
 				this.log(
 					'error',
-					`Invalid host or port — cannot build a URL from "${this.effectiveHost}" port ${this.config.port}`,
+					`Invalid host or port — cannot build a URL from "${this.effectiveHost}" port ${this.effectivePort}`,
 				)
 				this.updateStatus(InstanceStatus.ConnectionFailure, 'Invalid host or port')
 				break

@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
 	createRpcClient,
 	isAuthError,
+	isLoopbackHost,
 	isTierError,
 	type LeagueBroadcastRpc,
 	type RpcConnectionEvent,
@@ -87,6 +88,27 @@ async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
 // ─── Tests ───────────────────────────────────────────────────────────
 
 describe('loopback (no pairing token)', () => {
+	it('recognizes explicit loopback hosts so production disables the heartbeat', () => {
+		for (const host of [
+			'localhost',
+			'LOCALHOST.',
+			'worker.localhost',
+			'127.0.0.1',
+			'127.12.34.56',
+			'::1',
+			'[::1]',
+			'0:0:0:0:0:0:0:1',
+			'::ffff:127.0.0.1',
+			'[::1%3]',
+		]) {
+			expect(isLoopbackHost(host), host).toBe(true)
+		}
+
+		for (const host of ['192.168.1.20', '10.0.0.5', 'broadcast-pc.local', 'example.com', '::2']) {
+			expect(isLoopbackHost(host), host).toBe(false)
+		}
+	})
+
 	it('connects with NO Origin/Authorization headers and round-trips execute()', async () => {
 		const server = await startServer()
 		server.executeResult = { ok: true, error: '', entryJson: '{"entry":1}' }
@@ -236,8 +258,10 @@ describe('panel-state subscription', () => {
 		await connect(recorder)
 		await server.waitForRequest('caster_mode.subscribe_local_panel_state')
 
-		server.pushPanelState({ revision: 1n, blueTeamName: 'Before' })
-		await until(() => recorder.panelStates[0], 'panel-state push before drop')
+		await until(() => {
+			server.pushPanelState({ revision: 1n, blueTeamName: 'Before' })
+			return recorder.panelStates.find((state) => state.revision === 1n)
+		}, 'panel-state push before drop')
 
 		// Hard server-side drop: the runtime must reconnect AND replay the
 		// tracked subscription without any app-level help.
@@ -245,8 +269,10 @@ describe('panel-state subscription', () => {
 		await server.waitForRequest('caster_mode.subscribe_local_panel_state', 2)
 		await until(() => recorder.transport.connected, 'reconnect after drop')
 
-		server.pushPanelState({ revision: 2n, blueTeamName: 'After' })
-		const state = await until(() => recorder.panelStates[1], 'panel-state push after reconnect')
+		const state = await until(() => {
+			server.pushPanelState({ revision: 2n, blueTeamName: 'After' })
+			return recorder.panelStates.find((panel) => panel.revision === 2n)
+		}, 'panel-state push after reconnect')
 		expect(state.revision).toBe(2n)
 		expect(state.blueTeamName).toBe('After')
 		expect(recorder.events.some((e) => e.ev === 'disconnected')).toBe(true)

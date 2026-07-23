@@ -1,10 +1,11 @@
 /**
  * Unit tests for the config helpers: the bonjour "address:port" port-stripping
- * heuristic (resolveConfigHost) and IPv6 URL bracketing (formatHostForUrl).
+ * endpoint parsing (resolveConfigEndpoint) and IPv6 URL bracketing
+ * (formatHostForUrl).
  */
 
 import { describe, expect, it } from 'vitest'
-import { formatHostForUrl, resolveConfigHost, type ModuleConfig } from '../config.js'
+import { formatHostForUrl, resolveConfigEndpoint, resolveConfigHost, type ModuleConfig } from '../config.js'
 
 function config(init: Partial<ModuleConfig> = {}): ModuleConfig {
 	return { host: 'manual-host', port: 58869, ...init }
@@ -45,6 +46,41 @@ describe('resolveConfigHost', () => {
 		// 'fe80::1:80' is itself a valid IPv6 address — stripping ':80' could
 		// corrupt a genuine address, so 2+ colons without brackets = bare host.
 		expect(resolveConfigHost(config({ bonjourHost: 'fe80::1:80' }))).toBe('fe80::1:80')
+	})
+})
+
+describe('resolveConfigEndpoint', () => {
+	it('uses the manual host and port when discovery is not selected', () => {
+		expect(resolveConfigEndpoint(config({ host: 'manual', port: 59000 }))).toEqual({ host: 'manual', port: 59000 })
+	})
+
+	it('uses a valid port advertised by a fixed LeagueBroadcast build', () => {
+		expect(resolveConfigEndpoint(config({ bonjourHost: '192.168.1.20:59000' }))).toEqual({
+			host: '192.168.1.20',
+			port: 59000,
+		})
+		expect(resolveConfigEndpoint(config({ bonjourHost: '[fe80::1]:59000' }))).toEqual({
+			host: 'fe80::1',
+			port: 59000,
+		})
+	})
+
+	it('ignores the legacy hard-coded port 80 advertisement', () => {
+		expect(resolveConfigEndpoint(config({ port: 58869, bonjourHost: 'broadcast-pc.local:80' }))).toEqual({
+			host: 'broadcast-pc.local',
+			port: 58869,
+		})
+	})
+
+	it('falls back to the configured port for invalid or ambiguous advertised ports', () => {
+		expect(resolveConfigEndpoint(config({ port: 58870, bonjourHost: 'broadcast-pc.local:0' }))).toEqual({
+			host: 'broadcast-pc.local',
+			port: 58870,
+		})
+		expect(resolveConfigEndpoint(config({ port: 58870, bonjourHost: 'fe80::1' }))).toEqual({
+			host: 'fe80::1',
+			port: 58870,
+		})
 	})
 })
 
