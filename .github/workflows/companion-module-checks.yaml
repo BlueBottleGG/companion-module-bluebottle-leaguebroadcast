@@ -10,9 +10,9 @@ jobs:
     if: ${{ !contains(github.repository, 'companion-module-template-') }}
 
     permissions:
+      contents: read
       packages: read
 
     uses: bitfocus/actions/.github/workflows/module-checks.yaml@main
     # with:
     #   upload-artifact: true # uncomment this to upload the built package as an artifact to this workflow that you can download and share with others
-
