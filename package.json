@@ -1,6 +1,6 @@
 {
 	"name": "league-broadcast",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"main": "dist/main.js",
 	"type": "module",
 	"scripts": {
@@ -11,7 +11,8 @@
 		"build:main": "tsc -p tsconfig.build.json",
 		"dev": "tsc -p tsconfig.build.json --watch",
 		"lint:raw": "eslint",
-		"lint": "run lint:raw ."
+		"lint": "run lint:raw .",
+		"test": "vitest run"
 	},
 	"license": "MIT",
 	"repository": {
@@ -23,18 +24,21 @@
 		"yarn": "^4"
 	},
 	"dependencies": {
-		"@companion-module/base": "~1.14.1"
+		"@companion-module/base": "~1.14.1",
+		"ws": "^8.21.1"
 	},
 	"devDependencies": {
 		"@companion-module/tools": "^2.6.1",
 		"@types/node": "^22.19.3",
+		"@types/ws": "^8.18.1",
 		"eslint": "^9.39.2",
 		"husky": "^9.1.7",
 		"lint-staged": "^16.2.7",
 		"prettier": "^3.7.4",
 		"rimraf": "^6.1.2",
 		"typescript": "~5.9.3",
-		"typescript-eslint": "^8.51.0"
+		"typescript-eslint": "^8.51.0",
+		"vitest": "^4.1.10"
 	},
 	"prettier": "@companion-module/tools/.prettierrc.json",
 	"lint-staged": {

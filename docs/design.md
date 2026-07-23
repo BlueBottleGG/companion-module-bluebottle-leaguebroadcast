@@ -3,7 +3,7 @@
 Bitfocus Companion connection module for **LeagueBroadcast** (BlueBottleGG), giving broadcast
 operators Stream Deck / surface control over live League of Legends productions.
 
-Status: **rev 3 — as built (v0.1.0)** · Date: 2026-07-23 · Targets: Companion ≥ 4.2, LeagueBroadcast local API (port 58869)
+Status: **rev 4 — as built (v0.2.0: remote hosts, full action surface, integration tests)** · Date: 2026-07-23 · Targets: Companion ≥ 4.2, LeagueBroadcast local API (port 58869)
 
 > Rev 2: transport flipped from REST+`/ws/ui` to the FlatBuffers RPC (`/ws/rpc`) after
 > confirming the app is transitioning to RPC-only and `caster_mode` is explicitly the
@@ -28,6 +28,46 @@ Status: **rev 3 — as built (v0.1.0)** · Date: 2026-07-23 · Targets: Companio
 >   moved to the Phase-2 backlog instead (see §5.4 note).
 > - Tier gating landed server-side in parallel (audit session): `caster_mode.execute` throws
 >   `RpcException.Unauthorized` (401) on feature-gate rejections; the module keys on that.
+>
+> Rev 4 (v0.2.0) deltas — remote hosts + full surface + tests:
+>
+> - **Remote-host auth is live.** Server: persistent `RpcPairingTokenStore`
+>   (`companion-pairings.json`, SHA-256 hashes), token generate/list/revoke at
+>   `api/settings/companion/pairing`, webui **Settings → Remote Control** tab (copy-once UX).
+>   Framework quirk discovered: `AcceptAsync` only evaluates `Authorization: Bearer` for
+>   **allowlisted-Origin** peers — no-Origin native callers never have the header read
+>   (docs/architecture.md over-promised). Workaround: the app allowlists the synthetic origin
+>   `http://companion.bluebottle.invalid`; the module sends that Origin + Bearer **only when a
+>   token is configured** (a foreign Origin on loopback would downgrade auto-`local` to
+>   anonymous). Invalid token → HTTP 401 at upgrade, fail closed. Framework-level fix filed
+>   as a follow-up task chip.
+> - **Module remote support**: `pairingToken` as a real `secret-text` field (base secrets
+>   store; `InstanceBase<ModuleConfig, ModuleSecrets>`), `ws`-based WebSocket factory (second
+>   documented vendored-runtime patch) for header injection + upgrade-401 detection via
+>   `unexpected-response`, three-way 401 disambiguation (invalid token / needs token / tier).
+> - **Bonjour discovery**: manifest `bonjourQueries` on `_leaguebroadcast._tcp` + a
+>   `bonjour-device` config field; the advertised port is wrong in the app (80) so only the
+>   address is used and 58869 assumed (app-side fix filed as a task chip).
+> - **Deferred actions landed**: `overlaySet` (REST `showing`, bare-bool legacy shape; wire
+>   names are serialization property names — `GoldGraph`, not `GoldGraphV2`; the four
+>   `Latest*` catalog entries are pseudo-overlays and excluded), `seriesSelect` +
+>   `currentSeries` variable (30 s slow poll), `styleSetActivate`. **`swapSides` v0.1.0 was
+>   wired to a match-switch endpoint that would have ended the live game — now performs the
+>   app's real side swap** (`PUT /api/game/{id}/teams` reversed on the side-reference game).
+>   REST tier gate is actually **HTTP 402**, handled alongside 403.
+> - **Tier UX correction (post-review)**: `InstanceStatus` reflects **connection/auth health
+>   only** (pairing-token problems); tier limitation is surfaced via the `tierEntitled`
+>   feedback + `tier` variable (`ok`/`limited`, sticky until reconnect) and per-action error
+>   logs — never via status. Rationale: free tier is a _partial_ entitlement (free overlay
+>   buttons work), the background poll hits BasicTier-gated postgame endpoints (402 every
+>   cycle), and non-tier-gated successes (deactivate-all, get_active_overlays) can't prove
+>   entitlement — a status latch would either flap or lie. §7.1's "status = tier" guidance is
+>   superseded.
+> - **Integration test harness**: vitest + a mock LeagueBroadcast RPC server speaking the real
+>   wire protocol (envelope + FlatBuffer payloads built slot-for-slot); 30 tests cover header
+>   contract, command encoding defaults, panel-state decode (incl. bigint revision), 401
+>   classification, reconnect + subscription replay, cinematics playback, and the state-store
+>   diff logic. `yarn test` is CI-ready.
 
 ---
 
@@ -501,9 +541,14 @@ strong differentiator — no other LoL overlay tool ships an official Companion 
 - **Phase 1 — Module v0.1.0** ✅ **done**: full scaffold + real transport + cinematics +
   presets + HELP; packaged `league-broadcast-0.1.0.tgz` via companion-module-build. Ready for
   side-load pilot once integration-tested against a live app.
-- **Phase 2 — Full surface + store**: `overlaySet` (raw overlay types), `seriesSelect`,
-  `styleSetActivate`, HELP.md screenshots, live-app integration test, npm-published RPC client
-  replacing the vendored copy, store submission.
+- **Phase 2 — Full surface + remote** ✅ **done (v0.2.0)**: `overlaySet`/`seriesSelect`/
+  `styleSetActivate`, remote-host pairing (server + module + webui), bonjour discovery,
+  mock-server integration tests (30 passing).
+- **Remaining before/at store submission**: live-app end-to-end test (manual — run the app,
+  side-load the `.tgz`, walk the preset pages), HELP.md screenshots, npm-published RPC client
+  replacing the vendored copy (plus the framework no-Origin-Bearer fix and the mDNS port fix,
+  both filed as task chips), Bitfocus developer-portal submission (requires the maintainer's
+  account).
 - **Phase 3 — Polish & de-legacy**: remote-host pairing tokens (§4.4), mDNS auto-discovery
   (`bonjour-device`), swap each 🕘 REST fallback to its RPC twin as namespaces land, live
   game-data variables once an RPC game-state subscription exists, base 2.x migration when

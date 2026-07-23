@@ -6,6 +6,11 @@
 // Local patches: subscription rawHandler wrapped in try/catch so a deserializer or
 //   handler throw is logged instead of escaping ws.onmessage as an uncaughtException
 //   that kills the host process (TODO: upstream to @bluebottle/rpc).
+// - optional RpcClientOptions.webSocketFactory so a caller can supply a WebSocket
+//   built with custom upgrade headers (Node's native WebSocket cannot set headers;
+//   the `ws` package can, and it implements the browser-style onopen/onclose/
+//   onmessage/onerror + binaryType surface this runtime relies on). Needed for
+//   remote-host pairing auth (design.md §4.2/§4.4; TODO: upstream to @bluebottle/rpc).
 /**
  * @bluebottle/rpc — FlatBuffer-based RPC client runtime
  *
@@ -849,6 +854,14 @@ export interface RpcClientOptions {
    * Default true; ignored outside browser environments.
    */
   resumeOnVisibility?: boolean;
+  /**
+   * Local patch: optional factory for the underlying WebSocket, called once per
+   * connect attempt. The returned object must implement the browser-style surface
+   * (binaryType, onopen/onerror/onclose/onmessage, send, close) — the `ws` package
+   * does. Lets Node callers attach custom upgrade headers (e.g. Authorization) that
+   * the native WebSocket cannot set. Default: `new WebSocket(url)`.
+   */
+  webSocketFactory?: (url: string) => WebSocket;
 }
 
 /** Connection lifecycle events (multicast; the legacy onConnected/onDisconnected single
@@ -966,7 +979,10 @@ export class RpcClient {
 
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(this.options.url);
+      // Local patch: allow an injected WebSocket factory (custom upgrade headers).
+      this.ws = this.options.webSocketFactory
+        ? this.options.webSocketFactory(this.options.url)
+        : new WebSocket(this.options.url);
       this.ws.binaryType = 'arraybuffer';
 
       this.ws.onopen = () => {

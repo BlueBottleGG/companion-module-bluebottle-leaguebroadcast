@@ -3,15 +3,40 @@ import {
 	getCasterButtonChoices,
 	getPageChoices,
 	getPostgameButtonChoices,
+	getSeriesChoices,
+	getStyleSetChoices,
 	MOCK_PHASE_CHOICES,
+	OVERLAY_CATALOG,
 	PLAYER_INDEX_CHOICES,
 	POSTGAME_COMPONENT_CHOICES,
 	TEAM_SIDE_CHOICES,
 } from './choices.js'
-import type { MockPhase, PostgameScope } from './client/rest.js'
+import {
+	RestHttpError,
+	type LeagueBroadcastRest,
+	type MockPhase,
+	type PostgameScope,
+	type StylePhase,
+} from './client/rest.js'
+import type { LeagueBroadcastCommands } from './client/commands.js'
 
 // Action IDs are permanent public API — frozen at v1. Never rename or remove;
 // upgrade scripts are the only escape hatch.
+
+/**
+ * The REST/RPC clients are null while no host is configured (BadConfig) —
+ * every callback guards through these helpers so a button press logs cleanly
+ * instead of throwing a TypeError.
+ */
+function requireRest(self: ModuleInstance, actionId: string): LeagueBroadcastRest | null {
+	if (!self.rest) self.log('warn', `${actionId}: not configured — set a LeagueBroadcast host first`)
+	return self.rest
+}
+
+function requireCommands(self: ModuleInstance, actionId: string): LeagueBroadcastCommands | null {
+	if (!self.commands) self.log('warn', `${actionId}: not configured — set a LeagueBroadcast host first`)
+	return self.commands
+}
 
 export function UpdateActions(self: ModuleInstance): void {
 	self.setActionDefinitions({
@@ -38,6 +63,8 @@ export function UpdateActions(self: ModuleInstance): void {
 				},
 			],
 			callback: async (event) => {
+				const commands = requireCommands(self, 'casterButtonPress')
+				if (!commands) return
 				const buttonId = String(event.options.buttonId ?? '')
 				if (!buttonId) {
 					self.log('warn', 'casterButtonPress: no caster button selected')
@@ -49,10 +76,64 @@ export function UpdateActions(self: ModuleInstance): void {
 				else if (mode === 'hide') show = false
 				else show = !self.state.activeOverlaysByButtonId.has(buttonId)
 				try {
-					const result = await self.commands.toggleOverlay(buttonId, show)
+					const result = await commands.toggleOverlay(buttonId, show)
 					self.handleCommandResult('casterButtonPress', result)
 				} catch (err) {
 					self.handleCommandError('casterButtonPress', err)
+				}
+			},
+		},
+		overlaySet: {
+			name: 'Overlay: Show/Hide (raw overlay type)',
+			options: [
+				{
+					id: 'overlayKey',
+					type: 'dropdown',
+					label: 'Overlay',
+					tooltip:
+						'Targets the overlay type directly — no configured caster button needed. ' +
+						'Latest-event recaps are driven by the Damage/Objective/Teamfight recap actions instead.',
+					choices: OVERLAY_CATALOG,
+					default: 'Scoreboard',
+				},
+				{
+					id: 'mode',
+					type: 'dropdown',
+					label: 'Mode',
+					choices: [
+						{ id: 'toggle', label: 'Toggle' },
+						{ id: 'show', label: 'Show' },
+						{ id: 'hide', label: 'Hide' },
+					],
+					default: 'toggle',
+				},
+			],
+			callback: async (event) => {
+				const rest = requireRest(self, 'overlaySet')
+				if (!rest) return
+				const overlayKey = String(event.options.overlayKey ?? '')
+				if (!overlayKey) {
+					self.log('warn', 'overlaySet: no overlay selected')
+					return
+				}
+				const mode = String(event.options.mode ?? 'toggle')
+				let show: boolean
+				if (mode === 'show') show = true
+				else if (mode === 'hide') show = false
+				// The app reports active overlays under their serialization
+				// property names — the same names OVERLAY_CATALOG carries — so
+				// the toggle lookup keys directly on activeOverlayNames.
+				else show = !self.state.activeOverlayNames.has(overlayKey)
+				try {
+					await rest.setOverlayShowing(overlayKey, show)
+				} catch (err) {
+					// Outside a running/mocked game the app answers 400 "Game not
+					// running." — an expected state, not a module error.
+					if (err instanceof RestHttpError && err.status === 400) {
+						self.log('warn', `overlaySet: LeagueBroadcast has no running game — ${overlayKey} unchanged`)
+						return
+					}
+					self.handleRestError('overlaySet', err)
 				}
 			},
 		},
@@ -68,13 +149,15 @@ export function UpdateActions(self: ModuleInstance): void {
 				},
 			],
 			callback: async (event) => {
+				const commands = requireCommands(self, 'pageSwitch')
+				if (!commands) return
 				const pageId = String(event.options.pageId ?? '')
 				if (!pageId) {
 					self.log('warn', 'pageSwitch: no page selected')
 					return
 				}
 				try {
-					const result = await self.commands.pageSwitch(pageId)
+					const result = await commands.pageSwitch(pageId)
 					self.handleCommandResult('pageSwitch', result)
 				} catch (err) {
 					self.handleCommandError('pageSwitch', err)
@@ -85,8 +168,10 @@ export function UpdateActions(self: ModuleInstance): void {
 			name: 'Deactivate All Overlays',
 			options: [],
 			callback: async () => {
+				const commands = requireCommands(self, 'deactivateAll')
+				if (!commands) return
 				try {
-					const result = await self.commands.deactivateAll()
+					const result = await commands.deactivateAll()
 					self.handleCommandResult('deactivateAll', result)
 				} catch (err) {
 					self.handleCommandError('deactivateAll', err)
@@ -108,11 +193,11 @@ export function UpdateActions(self: ModuleInstance): void {
 				},
 			],
 			callback: async (event) => {
+				const commands = requireCommands(self, 'damageRecap')
+				if (!commands) return
 				try {
 					const result =
-						event.options.mode === 'deselect'
-							? await self.commands.damageDeselect()
-							: await self.commands.damageSelectLatest()
+						event.options.mode === 'deselect' ? await commands.damageDeselect() : await commands.damageSelectLatest()
 					self.handleCommandResult('damageRecap', result)
 				} catch (err) {
 					self.handleCommandError('damageRecap', err)
@@ -141,11 +226,13 @@ export function UpdateActions(self: ModuleInstance): void {
 				},
 			],
 			callback: async (event) => {
+				const commands = requireCommands(self, 'objectiveRecap')
+				if (!commands) return
 				try {
 					const result =
 						event.options.mode === 'deselect'
-							? await self.commands.objectiveDeselect()
-							: await self.commands.objectiveSelectLatest(Boolean(event.options.dps))
+							? await commands.objectiveDeselect()
+							: await commands.objectiveSelectLatest(Boolean(event.options.dps))
 					self.handleCommandResult('objectiveRecap', result)
 				} catch (err) {
 					self.handleCommandError('objectiveRecap', err)
@@ -167,9 +254,11 @@ export function UpdateActions(self: ModuleInstance): void {
 				},
 			],
 			callback: async (event) => {
+				const commands = requireCommands(self, 'teamfightTrack')
+				if (!commands) return
 				try {
 					const result =
-						event.options.mode === 'stop' ? await self.commands.teamfightStop() : await self.commands.teamfightStart()
+						event.options.mode === 'stop' ? await commands.teamfightStop() : await commands.teamfightStart()
 					self.handleCommandResult('teamfightTrack', result)
 				} catch (err) {
 					self.handleCommandError('teamfightTrack', err)
@@ -191,11 +280,13 @@ export function UpdateActions(self: ModuleInstance): void {
 				},
 			],
 			callback: async (event) => {
+				const commands = requireCommands(self, 'teamfightOverlay')
+				if (!commands) return
 				try {
 					const result =
 						event.options.mode === 'deselect'
-							? await self.commands.teamfightDeselect()
-							: await self.commands.teamfightSelectLatest()
+							? await commands.teamfightDeselect()
+							: await commands.teamfightSelectLatest()
 					self.handleCommandResult('teamfightOverlay', result)
 				} catch (err) {
 					self.handleCommandError('teamfightOverlay', err)
@@ -214,8 +305,10 @@ export function UpdateActions(self: ModuleInstance): void {
 				},
 			],
 			callback: async (event) => {
+				const commands = requireCommands(self, 'championDetailPin')
+				if (!commands) return
 				try {
-					const result = await self.commands.championDetailPin(Number(event.options.playerIndex ?? 0))
+					const result = await commands.championDetailPin(Number(event.options.playerIndex ?? 0))
 					self.handleCommandResult('championDetailPin', result)
 				} catch (err) {
 					self.handleCommandError('championDetailPin', err)
@@ -234,13 +327,15 @@ export function UpdateActions(self: ModuleInstance): void {
 				},
 			],
 			callback: async (event) => {
+				const commands = requireCommands(self, 'postgameShow')
+				if (!commands) return
 				const postgameId = Number(event.options.postgameId ?? -1)
 				if (postgameId < 0) {
 					self.log('warn', 'postgameShow: no postgame button selected')
 					return
 				}
 				try {
-					const result = await self.commands.postgameShow(postgameId)
+					const result = await commands.postgameShow(postgameId)
 					self.handleCommandResult('postgameShow', result)
 				} catch (err) {
 					self.handleCommandError('postgameShow', err)
@@ -286,10 +381,12 @@ export function UpdateActions(self: ModuleInstance): void {
 				},
 			],
 			callback: async (event) => {
+				const rest = requireRest(self, 'postgameShowComponent')
+				if (!rest) return
 				const componentType = String(event.options.componentType ?? '')
 				const scope = String(event.options.scope ?? 'current') as PostgameScope
 				try {
-					await self.rest.postgameShowComponent(
+					await rest.postgameShowComponent(
 						componentType,
 						scope,
 						Number(event.options.teamSide ?? 0),
@@ -304,8 +401,10 @@ export function UpdateActions(self: ModuleInstance): void {
 			name: 'Post-Game: Clear Component',
 			options: [],
 			callback: async () => {
+				const rest = requireRest(self, 'postgameClear')
+				if (!rest) return
 				try {
-					await self.rest.postgameClear()
+					await rest.postgameClear()
 				} catch (err) {
 					self.handleRestError('postgameClear', err)
 				}
@@ -333,11 +432,43 @@ export function UpdateActions(self: ModuleInstance): void {
 				},
 			],
 			callback: async (event) => {
+				const rest = requireRest(self, 'mockSet')
+				if (!rest) return
 				const phase = String(event.options.phase ?? 'ingame') as MockPhase
 				try {
-					await self.rest.setMock(phase, event.options.enabled === 'on')
+					await rest.setMock(phase, event.options.enabled === 'on')
 				} catch (err) {
 					self.handleRestError('mockSet', err)
+				}
+			},
+		},
+		seriesSelect: {
+			name: 'Series: Select',
+			options: [
+				{
+					id: 'seriesId',
+					type: 'dropdown',
+					label: 'Series',
+					tooltip: 'Series list is fetched from LeagueBroadcast and refreshed every 30 seconds',
+					choices: getSeriesChoices(self.state),
+					default: -1,
+				},
+			],
+			callback: async (event) => {
+				const rest = requireRest(self, 'seriesSelect')
+				if (!rest) return
+				const seriesId = Number(event.options.seriesId ?? -1)
+				if (!(seriesId >= 0)) {
+					self.log('warn', 'seriesSelect: no series selected')
+					return
+				}
+				try {
+					await rest.selectSeries(String(seriesId))
+					// Pull the polled series state forward so the currentSeries
+					// variable updates now instead of on the next 30 s cycle.
+					self.requestSlowRefresh()
+				} catch (err) {
+					self.handleRestError('seriesSelect', err)
 				}
 			},
 		},
@@ -357,8 +488,10 @@ export function UpdateActions(self: ModuleInstance): void {
 				},
 			],
 			callback: async (event) => {
+				const rest = requireRest(self, 'setBestOf')
+				if (!rest) return
 				try {
-					await self.rest.setBestOf(Number(event.options.bestOf ?? 3))
+					await rest.setBestOf(Number(event.options.bestOf ?? 3))
 				} catch (err) {
 					self.handleRestError('setBestOf', err)
 				}
@@ -370,20 +503,19 @@ export function UpdateActions(self: ModuleInstance): void {
 				{
 					id: 'seriesId',
 					type: 'textinput',
-					label: 'Series ID',
-					tooltip: 'The series to swap sides for (supports variables)',
+					label: 'Series ID (empty = current series)',
+					tooltip:
+						'Leave empty to swap sides of the current series; enter a series ID to target another one (supports variables)',
 					default: '',
 					useVariables: true,
 				},
 			],
 			callback: async (event, context) => {
+				const rest = requireRest(self, 'swapSides')
+				if (!rest) return
 				const seriesId = (await context.parseVariablesInString(String(event.options.seriesId ?? ''))).trim()
-				if (!seriesId) {
-					self.log('warn', 'swapSides: no series ID provided')
-					return
-				}
 				try {
-					await self.rest.swapSides(seriesId)
+					await rest.swapSides(seriesId || undefined)
 				} catch (err) {
 					self.handleRestError('swapSides', err)
 				}
@@ -402,13 +534,15 @@ export function UpdateActions(self: ModuleInstance): void {
 				},
 			],
 			callback: async (event, context) => {
+				const commands = requireCommands(self, 'cinematicArm')
+				if (!commands) return
 				const id = (await context.parseVariablesInString(String(event.options.cinematicId ?? ''))).trim()
 				if (!id) {
 					self.log('warn', 'cinematicArm: no cinematic ID provided')
 					return
 				}
 				try {
-					await self.commands.cinematicArm(id)
+					await commands.cinematicArm(id)
 				} catch (err) {
 					self.handleCommandError('cinematicArm', err)
 				}
@@ -418,8 +552,10 @@ export function UpdateActions(self: ModuleInstance): void {
 			name: 'Cinematic: Go',
 			options: [],
 			callback: async () => {
+				const commands = requireCommands(self, 'cinematicGo')
+				if (!commands) return
 				try {
-					await self.commands.cinematicGo()
+					await commands.cinematicGo()
 				} catch (err) {
 					self.handleCommandError('cinematicGo', err)
 				}
@@ -429,8 +565,10 @@ export function UpdateActions(self: ModuleInstance): void {
 			name: 'Cinematic: Stop',
 			options: [],
 			callback: async () => {
+				const commands = requireCommands(self, 'cinematicStop')
+				if (!commands) return
 				try {
-					await self.commands.cinematicStop()
+					await commands.cinematicStop()
 				} catch (err) {
 					self.handleCommandError('cinematicStop', err)
 				}
@@ -449,13 +587,15 @@ export function UpdateActions(self: ModuleInstance): void {
 				},
 			],
 			callback: async (event, context) => {
+				const commands = requireCommands(self, 'cinematicPlay')
+				if (!commands) return
 				const id = (await context.parseVariablesInString(String(event.options.cinematicId ?? ''))).trim()
 				if (!id) {
 					self.log('warn', 'cinematicPlay: no cinematic ID provided')
 					return
 				}
 				try {
-					await self.commands.cinematicPlay(id)
+					await commands.cinematicPlay(id)
 				} catch (err) {
 					self.handleCommandError('cinematicPlay', err)
 				}
@@ -476,10 +616,69 @@ export function UpdateActions(self: ModuleInstance): void {
 				},
 			],
 			callback: async (event) => {
+				const rest = requireRest(self, 'hotkeysSet')
+				if (!rest) return
 				try {
-					await self.rest.setHotkeysEnabled(event.options.enabled === 'on')
+					await rest.setHotkeysEnabled(event.options.enabled === 'on')
 				} catch (err) {
 					self.handleRestError('hotkeysSet', err)
+				}
+			},
+		},
+		styleSetActivate: {
+			name: 'Style Set: Activate',
+			options: [
+				{
+					id: 'phase',
+					type: 'dropdown',
+					label: 'Phase',
+					choices: MOCK_PHASE_CHOICES,
+					default: 'ingame',
+				},
+				// One phase-filtered dropdown per phase (isVisible keys on the
+				// phase option) instead of a single combined list with
+				// phase-prefixed labels — the visible dropdown only ever offers
+				// sets that exist for the chosen phase.
+				{
+					id: 'styleSetPregame',
+					type: 'dropdown',
+					label: 'Style Set',
+					choices: getStyleSetChoices(self.state, 'pregame'),
+					default: '',
+					isVisible: (options) => options.phase === 'pregame',
+				},
+				{
+					id: 'styleSetIngame',
+					type: 'dropdown',
+					label: 'Style Set',
+					choices: getStyleSetChoices(self.state, 'ingame'),
+					default: '',
+					isVisible: (options) => options.phase === 'ingame',
+				},
+				{
+					id: 'styleSetPostgame',
+					type: 'dropdown',
+					label: 'Style Set',
+					choices: getStyleSetChoices(self.state, 'postgame'),
+					default: '',
+					isVisible: (options) => options.phase === 'postgame',
+				},
+			],
+			callback: async (event) => {
+				const rest = requireRest(self, 'styleSetActivate')
+				if (!rest) return
+				const phase = String(event.options.phase ?? 'ingame') as StylePhase
+				const optionId =
+					phase === 'pregame' ? 'styleSetPregame' : phase === 'postgame' ? 'styleSetPostgame' : 'styleSetIngame'
+				const name = String(event.options[optionId] ?? '')
+				if (!name) {
+					self.log('warn', 'styleSetActivate: no style set selected')
+					return
+				}
+				try {
+					await rest.activateStyleSet(phase, name)
+				} catch (err) {
+					self.handleRestError('styleSetActivate', err)
 				}
 			},
 		},

@@ -4,11 +4,24 @@
  */
 
 import type { DropdownChoice } from '@companion-module/base'
+import type { StylePhase } from './client/rest.js'
 import type { LeagueBroadcastState } from './state.js'
 
 /**
- * Static overlay catalog (value = exact overlay name in LeagueBroadcast).
- * Mirrors CasterActionCatalog in the app.
+ * Static overlay catalog. Values are the app's SERIALIZATION property names
+ * (IngameStateSerializationData) — the exact names the app reports in the
+ * panel state's active overlays and accepts (camelCased) on
+ * POST api/ingame/showing, so the same value works for both the overlayActive
+ * feedback and the overlaySet action.
+ *
+ * Two deliberate deltas from CasterActionCatalog's action ids: the catalog
+ * action 'GoldGraphV2' drives the wire property 'GoldGraph' (the action kept
+ * its V2 suffix, the property did not), and the four 'Latest*' actions
+ * (LatestDamageRecap, LatestObjectiveInfo, LatestObjectiveDps,
+ * LatestTeamfight) are event-feed pseudo-overlays with no serialization
+ * property — the recap overlays they drive appear here as 'DamageRecap' /
+ * 'ObjectiveDps' / 'TeamfightTimeline' instead (use the Damage/Objective/
+ * Teamfight recap actions to select events).
  */
 export const OVERLAY_CATALOG: DropdownChoice[] = [
 	{ id: 'Scoreboard', label: 'Scoreboard' },
@@ -16,7 +29,7 @@ export const OVERLAY_CATALOG: DropdownChoice[] = [
 	{ id: 'Inhibitors', label: 'Inhibitors' },
 	{ id: 'BaronPitTimer', label: 'Baron Pit Timer' },
 	{ id: 'DragonPitTimer', label: 'Dragon Pit Timer' },
-	{ id: 'GoldGraphV2', label: 'Gold Graph' },
+	{ id: 'GoldGraph', label: 'Gold Graph' },
 	{ id: 'Runes', label: 'Runes' },
 	{ id: 'Patch', label: 'Patch' },
 	{ id: 'Tabs', label: 'Tabs' },
@@ -39,10 +52,8 @@ export const OVERLAY_CATALOG: DropdownChoice[] = [
 	{ id: 'KillParticipation', label: 'Kill Participation' },
 	{ id: 'DamageComposition', label: 'Damage Composition' },
 	{ id: 'DamageFlow', label: 'Damage Flow' },
-	{ id: 'LatestDamageRecap', label: 'Latest Damage Recap' },
-	{ id: 'LatestObjectiveInfo', label: 'Latest Objective Info' },
-	{ id: 'LatestObjectiveDps', label: 'Latest Objective DPS' },
-	{ id: 'LatestTeamfight', label: 'Latest Teamfight' },
+	{ id: 'DamageRecap', label: 'Damage Recap' },
+	{ id: 'TeamfightTimeline', label: 'Teamfight Timeline' },
 	{ id: 'ChampionDetail', label: 'Champion Detail' },
 ]
 
@@ -127,6 +138,26 @@ export function getPostgameButtonChoices(state: LeagueBroadcastState): DropdownC
 	}))
 	if (choices.length === 0) {
 		choices.push({ id: -1, label: 'No postgame buttons known yet (waiting for LeagueBroadcast)' })
+	}
+	return choices
+}
+
+/** Dropdown of the series (matches) known to the app; completed series are excluded (the app rejects switching to them). */
+export function getSeriesChoices(state: LeagueBroadcastState): DropdownChoice[] {
+	const choices: DropdownChoice[] = state.seriesList
+		.filter((series) => !series.completed)
+		.map((series) => ({ id: series.id, label: series.label }))
+	if (choices.length === 0) {
+		choices.push({ id: -1, label: 'No series known yet (waiting for LeagueBroadcast)' })
+	}
+	return choices
+}
+
+/** Dropdown of the style sets available for one phase. */
+export function getStyleSetChoices(state: LeagueBroadcastState, phase: StylePhase): DropdownChoice[] {
+	const choices: DropdownChoice[] = state.styleSets[phase].map((name) => ({ id: name, label: name }))
+	if (choices.length === 0) {
+		choices.push({ id: '', label: 'No style sets known yet (waiting for LeagueBroadcast)' })
 	}
 	return choices
 }

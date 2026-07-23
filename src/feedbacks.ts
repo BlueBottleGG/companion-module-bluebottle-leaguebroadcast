@@ -167,7 +167,7 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 			},
 			options: [],
 			callback: () => {
-				return !self.state.tierBlocked
+				return !self.state.tierLimited
 			},
 		},
 		cinematicPlaying: {

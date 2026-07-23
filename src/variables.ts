@@ -10,11 +10,12 @@ export function UpdateVariableDefinitions(self: ModuleInstance): void {
 		},
 		{ variableId: 'blueTeamName', name: 'Blue team name' },
 		{ variableId: 'redTeamName', name: 'Red team name' },
+		{ variableId: 'currentSeries', name: 'Current series (label; empty when none)' },
 		{ variableId: 'activePage', name: 'Active caster page name' },
 		{ variableId: 'activeOverlayCount', name: 'Number of active overlays' },
 		{ variableId: 'postgameComponent', name: 'Active post-game component' },
 		{ variableId: 'hotkeysEnabled', name: 'Keyboard hotkeys enabled (on/off)' },
-		{ variableId: 'tier', name: 'Tier entitlement (ok/blocked)' },
+		{ variableId: 'tier', name: 'Tier entitlement (ok/limited)' },
 		{ variableId: 'appVersion', name: 'LeagueBroadcast version' },
 		{ variableId: 'connectionState', name: 'Connection state' },
 	])

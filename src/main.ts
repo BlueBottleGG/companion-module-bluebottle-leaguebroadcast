@@ -1,34 +1,70 @@
 import { InstanceBase, runEntrypoint, InstanceStatus, type SomeCompanionConfigField } from '@companion-module/base'
-import { GetConfigFields, type ModuleConfig } from './config.js'
+import { GetConfigFields, resolveConfigHost, type ModuleConfig, type ModuleSecrets } from './config.js'
 import { UpdateVariableDefinitions } from './variables.js'
 import { UpgradeScripts } from './upgrades.js'
 import { UpdateActions } from './actions.js'
 import { UpdateFeedbacks } from './feedbacks.js'
 import { UpdatePresets } from './presets.js'
 import { LeagueBroadcastState } from './state.js'
-import { createRpcClient, isTierError, type LeagueBroadcastRpc, type RpcConnectionEvent } from './client/rpc.js'
+import {
+	createRpcClient,
+	isAuthError,
+	isTierError,
+	type LeagueBroadcastRpc,
+	type RpcConnectionEvent,
+} from './client/rpc.js'
 import { isForbiddenError, LeagueBroadcastRest } from './client/rest.js'
 import { LeagueBroadcastCommands } from './client/commands.js'
 import type { CasterCommandResultDto, CasterPanelStateDto } from './client/lb-types.js'
 
 const POLL_INTERVAL_MS = 5000
+/**
+ * Every Nth fast tick also runs the slow series/style-set poll
+ * (6 × 5 s = 30 s) — those lists change at human speed.
+ */
+const SLOW_POLL_EVERY_TICKS = 6
+/**
+ * Logged (never shown as instance status) when the app rejects a gated call
+ * for tier reasons. Tier limitation surfaces exclusively through the `tier`
+ * variable and the `tierEntitled` feedback — the free tier stays fully usable,
+ * so the instance status must not degrade over it.
+ */
 const TIER_MESSAGE = 'Companion control requires the LeagueBroadcast Basic tier'
+/** WebSocket upgrade answered HTTP 401 — the pairing token was sent and rejected (fail closed). */
+const INVALID_TOKEN_MESSAGE = 'Invalid pairing token — generate a new one in LeagueBroadcast Settings → Remote Control'
+/** Gated call answered RpcError 401 "Not authenticated" — remote connection in anonymous scope. */
+const AUTH_REQUIRED_MESSAGE = 'This connection needs a pairing token (LeagueBroadcast Settings → Remote Control)'
 
 function isUnauthorizedMessage(message: string): boolean {
 	return message.toLowerCase().includes('unauthorized')
 }
 
-export class ModuleInstance extends InstanceBase<ModuleConfig> {
+export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 	config!: ModuleConfig // Setup in init()
+	/** secret-text config values (Companion's separate secrets store). Setup in init(). */
+	secrets: ModuleSecrets = {}
 	state = new LeagueBroadcastState()
-	rest!: LeagueBroadcastRest
-	commands!: LeagueBroadcastCommands
+	/** `null` until a host is configured — action callbacks must guard (see actions.ts). */
+	rest: LeagueBroadcastRest | null = null
+	/** `null` until a host is configured — action callbacks must guard (see actions.ts). */
+	commands: LeagueBroadcastCommands | null = null
 
 	private rpc: LeagueBroadcastRpc | null = null
 	private pollTimer: NodeJS.Timeout | null = null
 	private pollInFlight = false
 	private lastChoicesHash = ''
 	private versionFetched = false
+	/** Host the current connection cycle targets (bonjour-discovered or manual) — for status messages. */
+	private effectiveHost = ''
+	/**
+	 * One-shot latch: the last connect attempt's WebSocket upgrade was rejected
+	 * with HTTP 401 (invalid pairing token). Consumed by the next 'reconnecting'
+	 * event so the AuthenticationFailure status survives the reconnect loop's
+	 * own status updates; re-armed by every rejected retry, cleared on connect.
+	 */
+	private upgradeRejected401 = false
+	/** Fast ticks remaining until the next slow (series/style-set) poll; 0 = due now. */
+	private slowPollCountdown = 0
 	/**
 	 * Bumped by setupConnection/teardownConnection/destroy. Async continuations
 	 * (handleConnected, pollTick, fetchVersionOnce) capture it at entry and
@@ -45,8 +81,9 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 		return this.rpc?.connected ?? false
 	}
 
-	async init(config: ModuleConfig): Promise<void> {
+	async init(config: ModuleConfig, _isFirstInit: boolean, secrets: ModuleSecrets): Promise<void> {
 		this.config = config
+		this.secrets = secrets ?? {}
 
 		this.updateActions() // export actions
 		this.updateFeedbacks() // export feedbacks
@@ -63,9 +100,12 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 		this.teardownConnection()
 	}
 
-	async configUpdated(config: ModuleConfig): Promise<void> {
+	async configUpdated(config: ModuleConfig, secrets: ModuleSecrets): Promise<void> {
+		// A changed pairing token flows through here: teardown drops the old
+		// transport, setupConnection passes the new token to createRpcClient.
 		this.teardownConnection()
 		this.config = config
+		this.secrets = secrets ?? {}
 		this.setupConnection()
 	}
 
@@ -94,28 +134,49 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 
 	private setupConnection(): void {
 		this.connectionGeneration++
-		if (!this.config.host) {
+		// Effective host: bonjour-discovered address when one is selected, else
+		// the manual host field (the discovered PORT is ignored — see config.ts).
+		const host = resolveConfigHost(this.config)
+		if (!host) {
+			// Drop any clients from the previous cycle BEFORE going BadConfig —
+			// action callbacks must find null (and log cleanly) instead of firing
+			// stale requests at the old host. teardownConnection already dropped
+			// the rpc in the configUpdated path; the guard covers every path.
+			this.rest = null
+			this.commands = null
+			if (this.rpc) {
+				this.rpc.destroy()
+				this.rpc = null
+			}
 			this.updateStatus(InstanceStatus.BadConfig, 'No host configured')
 			return
 		}
+		this.effectiveHost = host
 		this.updateStatus(InstanceStatus.Connecting)
 
 		this.state = new LeagueBroadcastState()
 		this.state.connectionState = 'connecting'
 		this.lastChoicesHash = this.state.choicesHash()
 		this.versionFetched = false
+		this.upgradeRejected401 = false
+		this.slowPollCountdown = 0
 		this.initVariableValues()
 
-		this.rest = new LeagueBroadcastRest(this.config.host, this.config.port)
-		const rpc = createRpcClient(this.config.host, this.config.port)
+		this.rest = new LeagueBroadcastRest(host, this.config.port)
+		const rpc = createRpcClient(host, this.config.port, this.secrets.pairingToken)
 		this.rpc = rpc
 		this.commands = new LeagueBroadcastCommands(rpc)
 		rpc.onConnectionEvent = (ev, reconnectAttempt) => this.handleConnectionEvent(ev, reconnectAttempt)
 		rpc.onPanelState = (panel) => this.handlePanelState(panel)
 		rpc.onCinematicPlayback = (playing) => this.handleCinematicPlayback(playing)
+		rpc.onUpgradeRejected = (statusCode) => this.handleUpgradeRejected(statusCode)
 		rpc.onSubscribeError = (subscription, err) => {
+			if (isAuthError(err)) {
+				this.markAuthRequired()
+				return
+			}
 			if (isTierError(err)) {
-				this.markTierBlocked()
+				this.markTierLimited()
 				return
 			}
 			this.log('warn', `Subscription ${subscription} failed: ${err.message}`)
@@ -151,6 +212,7 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 			gamePhase: 'none',
 			blueTeamName: '',
 			redTeamName: '',
+			currentSeries: '',
 			activePage: '',
 			activeOverlayCount: 0,
 			postgameComponent: '',
@@ -174,30 +236,63 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 
 		switch (ev) {
 			case 'reconnecting':
-				// The runtime retries forever (maxReconnectAttempts: Infinity), so
-				// 'reconnect-failed' never fires on its own — surface an unreachable
-				// app by attempt count instead while the retry loop keeps running.
-				if (reconnectAttempt !== undefined && reconnectAttempt >= 3) {
+				// A 401-rejected upgrade fires onUpgradeRejected right before this
+				// event — consume the latch so the AuthenticationFailure status is
+				// not clobbered by the reconnect loop's own updates. The loop keeps
+				// retrying: the user may fix the token app-side at any time, and
+				// the runtime's backoff paces the attempts.
+				if (this.upgradeRejected401) {
+					this.upgradeRejected401 = false
+					this.updateStatus(InstanceStatus.AuthenticationFailure, INVALID_TOKEN_MESSAGE)
+				} else if (reconnectAttempt !== undefined && reconnectAttempt >= 3) {
+					// The runtime retries forever (maxReconnectAttempts: Infinity), so
+					// 'reconnect-failed' never fires on its own — surface an unreachable
+					// app by attempt count instead while the retry loop keeps running.
 					this.updateStatus(
 						InstanceStatus.ConnectionFailure,
-						`LeagueBroadcast not reachable at ${this.config.host}:${this.config.port} — is the app running?`,
+						`LeagueBroadcast not reachable at ${this.effectiveHost}:${this.config.port} — is the app running?`,
 					)
 				} else {
 					this.updateStatus(InstanceStatus.Connecting)
 				}
 				break
 			case 'connected':
+				this.upgradeRejected401 = false
 				void this.handleConnected()
 				break
 			case 'reconnect-failed':
 				this.updateStatus(
 					InstanceStatus.ConnectionFailure,
-					`LeagueBroadcast not reachable at ${this.config.host}:${this.config.port} — is the app running?`,
+					`LeagueBroadcast not reachable at ${this.effectiveHost}:${this.config.port} — is the app running?`,
 				)
+				break
+			case 'invalid-url':
+				// Terminal for this cycle: no ws URL could be built, no reconnect
+				// loop is running. Only a config change starts a new cycle.
+				this.log(
+					'error',
+					`Invalid host or port — cannot build a URL from "${this.effectiveHost}" port ${this.config.port}`,
+				)
+				this.updateStatus(InstanceStatus.ConnectionFailure, 'Invalid host or port')
 				break
 			case 'disconnected':
 				this.updateStatus(InstanceStatus.Disconnected)
 				break
+		}
+	}
+
+	/**
+	 * The WebSocket upgrade came back as a plain HTTP response instead of 101
+	 * (pairing-token path only). 401 = the server rejected the token at upgrade
+	 * (fail closed) — latch it for the 'reconnecting' event that follows and
+	 * surface the failure immediately.
+	 */
+	private handleUpgradeRejected(statusCode: number): void {
+		if (statusCode === 401) {
+			this.upgradeRejected401 = true
+			this.updateStatus(InstanceStatus.AuthenticationFailure, INVALID_TOKEN_MESSAGE)
+		} else {
+			this.log('warn', `WebSocket upgrade rejected with HTTP ${statusCode} — check host and port`)
 		}
 	}
 
@@ -206,7 +301,20 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 		const rpc = this.rpc
 		if (!rpc) return
 
-		// Gated liveness/tier probe ONLY — the result is deliberately discarded.
+		// Fresh-cycle reset of the sticky tier flag. This is the ONLY place it
+		// clears: a clean poll, a successful command, or a successful
+		// getActiveOverlays call prove nothing about tier entitlement (those
+		// calls are auth-gated but not tier-gated, or plain ungated), so
+		// clearing on any of them would flap the variable/feedback against the
+		// gated rejections every few seconds. After this reset, the first gated
+		// rejection of the new cycle re-sets the flag — so a tier upgrade in
+		// the app takes effect on the next (re)connect.
+		this.clearTierLimited()
+		// Re-fetch the app version each cycle — the app may have been updated
+		// between reconnects.
+		this.versionFetched = false
+
+		// Auth/liveness probe ONLY — the result is deliberately discarded.
 		// The panel-state subscription is the authoritative state source: the
 		// server pushes a full snapshot on every (re)subscribe and the runtime
 		// replays subscriptions on reconnect, so state population happens
@@ -214,26 +322,36 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 		try {
 			await rpc.getActiveOverlays()
 			if (generation !== this.connectionGeneration) return
-			// A successful gated call proves entitlement — clear any stale tier block.
-			this.clearTierBlocked()
 		} catch (err) {
 			if (generation !== this.connectionGeneration) return
 			const message = err instanceof Error ? err.message : String(err)
-			if (isTierError(err)) {
-				this.markTierBlocked()
+			if (isAuthError(err)) {
+				// Remote connection accepted in anonymous scope (no/expired pairing
+				// token): every gated call answers 401 "Not authenticated". Distinct
+				// from the tier limitation — pairing, not upgrading, is the fix,
+				// and this IS a status-worthy failure (nothing works without auth).
+				this.markAuthRequired()
 				return
 			}
-			this.log('warn', `Gated liveness probe failed: ${message}`)
+			if (isTierError(err)) {
+				this.markTierLimited()
+			} else {
+				this.log('warn', `Liveness probe failed: ${message}`)
+			}
 		}
 
 		await this.fetchVersionOnce(generation)
 		if (generation !== this.connectionGeneration) return
-		// Kick a poll cycle immediately — the interval only ticks while connected.
+		// Kick a poll cycle immediately — the interval only ticks while
+		// connected — and make it a full one: an app restart may have changed
+		// the series/style-set lists, so the slow poll must not wait out its
+		// 30 s cadence after a reconnect.
+		this.slowPollCountdown = 0
 		void this.pollTick()
 
-		if (!this.state.tierBlocked) {
-			this.updateStatus(InstanceStatus.Ok)
-		}
+		// Ok unconditionally: tier limitation is variable/feedback state, not
+		// connection state — the status never carries it.
+		this.updateStatus(InstanceStatus.Ok)
 	}
 
 	private handlePanelState(panel: CasterPanelStateDto): void {
@@ -248,16 +366,23 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 				this.checkFeedbacks(...change.affectedFeedbacks)
 			}
 
-			// Rebuild action & feedback definitions only when the dynamic dropdown
-			// sources (pages/buttons/overlay names) actually changed.
-			const hash = this.state.choicesHash()
-			if (hash !== this.lastChoicesHash) {
-				this.lastChoicesHash = hash
-				this.updateActions()
-				this.updateFeedbacks()
-			}
+			this.rebuildDefinitionsIfChoicesChanged()
 		} catch (err) {
 			this.log('error', `Panel state handling failed: ${err instanceof Error ? err.message : String(err)}`)
+		}
+	}
+
+	/**
+	 * Rebuild action & feedback definitions only when the dynamic dropdown
+	 * sources (pages/buttons/overlay names/series/style sets) actually changed
+	 * — never per state tick.
+	 */
+	private rebuildDefinitionsIfChoicesChanged(): void {
+		const hash = this.state.choicesHash()
+		if (hash !== this.lastChoicesHash) {
+			this.lastChoicesHash = hash
+			this.updateActions()
+			this.updateFeedbacks()
 		}
 	}
 
@@ -275,11 +400,12 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 	private async pollTick(): Promise<void> {
 		// Poll only while the RPC transport is connected — on disconnect the
 		// polled state freezes and variables keep their last values.
-		if (this.pollInFlight || !this.rest || !this.rpcConnected) return
+		const rest = this.rest
+		if (this.pollInFlight || !rest || !this.rpcConnected) return
 		const generation = this.connectionGeneration
 		this.pollInFlight = true
 		try {
-			const polled = await this.rest.fetchPolledState()
+			const polled = await rest.fetchPolledState()
 			if (generation !== this.connectionGeneration) return
 			const change = this.state.applyPolledState(polled)
 			if (Object.keys(change.changedVariables).length > 0) {
@@ -289,13 +415,27 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 				this.checkFeedbacks(...change.affectedFeedbacks)
 			}
 			if (polled.sawForbidden) {
-				this.markTierBlocked()
+				// 402 on the tier-gated postgame GETs is evidence of a limited
+				// tier: set the sticky flag (logged once inside markTierLimited,
+				// not every 5 s cycle), freeze the affected polled fields at
+				// their last values, and leave the instance status alone.
+				this.markTierLimited()
 			}
-			// Deliberately NO clearTierBlocked here: some of the polled GETs may
-			// be ungated, so a "clean" poll proves nothing about entitlement —
-			// clearing on it would oscillate the status every 5 s against the
-			// gated calls. The block clears only when a GATED call succeeds
-			// (getActiveOverlays in handleConnected, caster_mode execute).
+			// Deliberately NO clearTierLimited here: a "clean" poll proves
+			// nothing about entitlement (several polled GETs are ungated), so
+			// clearing on it would flap the tier variable/feedback every 5 s
+			// against the gated rejections. The flag clears only in
+			// handleConnected (fresh connect cycle).
+
+			// Slow cycle (series list, current series, style sets) every
+			// SLOW_POLL_EVERY_TICKS fast ticks — those change at human speed.
+			const slowDue = this.slowPollCountdown <= 0
+			this.slowPollCountdown = slowDue ? SLOW_POLL_EVERY_TICKS - 1 : this.slowPollCountdown - 1
+			if (slowDue) {
+				await this.slowPollTick(generation)
+				if (generation !== this.connectionGeneration) return
+			}
+
 			if (!this.versionFetched) {
 				await this.fetchVersionOnce(generation)
 			}
@@ -313,10 +453,42 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 		}
 	}
 
+	/** One slow poll: fetch + apply series/style-set state, then rebuild dropdowns if they changed. */
+	private async slowPollTick(generation: number): Promise<void> {
+		const rest = this.rest
+		if (!rest) return
+		const slow = await rest.fetchSlowPolledState()
+		if (generation !== this.connectionGeneration) return
+		const change = this.state.applySlowPolledState(slow)
+		if (Object.keys(change.changedVariables).length > 0) {
+			this.setVariableValues(change.changedVariables)
+		}
+		if (change.affectedFeedbacks.length > 0) {
+			this.checkFeedbacks(...change.affectedFeedbacks)
+		}
+		if (slow.sawForbidden) {
+			// Same background-evidence path as pollTick: flag only, no status.
+			this.markTierLimited()
+		}
+		this.rebuildDefinitionsIfChoicesChanged()
+	}
+
+	/**
+	 * Pull the slow-polled series/style-set state forward: mark it due and
+	 * kick a poll cycle now (used by actions that just changed series state).
+	 * If a poll is already in flight the kick is dropped, but the due marker
+	 * holds — the next 5 s tick runs the slow poll instead.
+	 */
+	requestSlowRefresh(): void {
+		this.slowPollCountdown = 0
+		void this.pollTick()
+	}
+
 	private async fetchVersionOnce(generation: number): Promise<void> {
-		if (this.versionFetched || !this.rest) return
+		const rest = this.rest
+		if (this.versionFetched || !rest) return
 		try {
-			const version = await this.rest.getVersion()
+			const version = await rest.getVersion()
 			if (generation !== this.connectionGeneration) return
 			if (version) {
 				this.versionFetched = true
@@ -326,58 +498,82 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 		} catch (err) {
 			if (generation !== this.connectionGeneration) return
 			if (isForbiddenError(err)) {
-				this.markTierBlocked()
+				this.markTierLimited()
 			} else {
 				this.log('debug', `Version fetch failed: ${err instanceof Error ? err.message : String(err)}`)
 			}
 		}
 	}
 
-	// --- tier gating ---
+	// --- connection auth (remote pairing) ---
 
-	markTierBlocked(): void {
-		if (!this.state.tierBlocked) {
-			this.state.tierBlocked = true
-			this.setVariableValues({ tier: 'blocked' })
-			this.checkFeedbacks('tierEntitled')
-		}
-		// Always (re)assert the status, even when already blocked: a reconnect
-		// may have set Connecting after the block was first raised, and an
-		// early-return here would strand the instance on Connecting forever.
-		// InstanceStatus.InsufficientPermissions does not exist in
-		// @companion-module/base 1.14 — AuthenticationFailure is the closest
-		// sanctioned status for entitlement problems on this API version.
-		this.updateStatus(InstanceStatus.AuthenticationFailure, TIER_MESSAGE)
+	/**
+	 * A gated RPC call was rejected because the connection is unauthenticated
+	 * (remote, anonymous scope). Recovery is a new paired connection: the user
+	 * enters a token (configUpdated rebuilds), so no clear-side twin is needed —
+	 * a successfully paired connect cycle sets Ok through handleConnected.
+	 */
+	markAuthRequired(): void {
+		this.updateStatus(InstanceStatus.AuthenticationFailure, AUTH_REQUIRED_MESSAGE)
 	}
 
-	clearTierBlocked(): void {
-		if (!this.state.tierBlocked) return
-		this.state.tierBlocked = false
+	// --- tier gating ---
+
+	/**
+	 * Sticky per-connection-cycle flag: the app rejected a gated call for tier
+	 * reasons. Surfaces ONLY through the `tier` variable and the `tierEntitled`
+	 * feedback — NEVER through the instance status (AuthenticationFailure is
+	 * reserved for pairing/auth; the free tier stays fully usable, so the
+	 * status stays Ok). Cleared exclusively by handleConnected: nothing short
+	 * of a fresh connect cycle proves tier entitlement.
+	 */
+	markTierLimited(): void {
+		if (this.state.tierLimited) return
+		this.state.tierLimited = true
+		this.setVariableValues({ tier: 'limited' })
+		this.checkFeedbacks('tierEntitled')
+		// One line per connection cycle (the flag only resets in
+		// handleConnected), not one per 5 s poll.
+		this.log('info', `${TIER_MESSAGE} — gated buttons and the polled post-game state stay inactive on this tier`)
+	}
+
+	private clearTierLimited(): void {
+		if (!this.state.tierLimited) return
+		this.state.tierLimited = false
 		this.setVariableValues({ tier: 'ok' })
 		this.checkFeedbacks('tierEntitled')
-		this.updateStatus(this.rpcConnected ? InstanceStatus.Ok : InstanceStatus.Connecting)
 	}
 
 	// --- error handling helpers used by actions.ts ---
 
 	handleCommandResult(actionId: string, result: CasterCommandResultDto): void {
 		if (result.ok) {
-			// caster_mode.execute is a gated call — success proves entitlement,
-			// so clear any stale tier block (no-op when not blocked).
-			this.clearTierBlocked()
+			// Deliberately NO clearTierLimited on success: one command working
+			// does not prove entitlement for every gated feature — clearing here
+			// would flap the tier variable/feedback (see handleConnected).
 			return
 		}
 		if (isUnauthorizedMessage(result.error)) {
-			this.markTierBlocked()
+			this.markTierLimited()
 		}
+		// Always log the app's own message at error level so the operator sees
+		// WHY the button did nothing.
 		this.log('error', `${actionId}: command failed: ${result.error}`)
 	}
 
 	handleCommandError(actionId: string, err: unknown): void {
 		const message = err instanceof Error ? err.message : String(err)
-		if (isTierError(err)) {
-			this.markTierBlocked()
+		if (isAuthError(err)) {
+			this.markAuthRequired()
 			this.log('warn', `${actionId}: ${message}`)
+			return
+		}
+		if (isTierError(err)) {
+			this.markTierLimited()
+			// Error level, with the app's message: the button visibly did
+			// nothing, and this log line is the operator's only explanation
+			// (the instance status deliberately stays Ok).
+			this.log('error', `${actionId}: ${message}`)
 			return
 		}
 		this.log('error', `${actionId}: ${message}`)
@@ -385,8 +581,9 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 
 	handleRestError(actionId: string, err: unknown): void {
 		if (isForbiddenError(err)) {
-			this.markTierBlocked()
-			this.log('warn', `${actionId}: ${TIER_MESSAGE}`)
+			this.markTierLimited()
+			// Same reasoning as handleCommandError's tier branch.
+			this.log('error', `${actionId}: ${TIER_MESSAGE} (${err instanceof Error ? err.message : String(err)})`)
 			return
 		}
 		this.log('error', `${actionId}: ${err instanceof Error ? err.message : String(err)}`)

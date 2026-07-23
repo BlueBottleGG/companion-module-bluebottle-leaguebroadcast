@@ -9,12 +9,14 @@ const COLOR_AMBER = combineRgb(204, 153, 0)
 const COLOR_RED = combineRgb(204, 0, 0)
 const COLOR_DARK_RED = combineRgb(153, 0, 0)
 
-// Overlays common enough to ship as ready-made preset tiles. The
-// casterButtonPress action on these presets is left without a target button —
-// the user picks their own configured caster button after dragging (see HELP.md).
+// Overlays common enough to ship as ready-made preset tiles. Each targets its
+// raw overlay type via overlaySet, so the presets work drag-and-drop with zero
+// configuration; overlayName values are the app's serialization property names
+// (see OVERLAY_CATALOG in choices.ts) and drive both the action and the
+// overlayActive feedback.
 const COMMON_OVERLAY_PRESETS: { overlayName: string; label: string }[] = [
 	{ overlayName: 'Scoreboard', label: 'Score\nboard' },
-	{ overlayName: 'GoldGraphV2', label: 'Gold\nGraph' },
+	{ overlayName: 'GoldGraph', label: 'Gold\nGraph' },
 	{ overlayName: 'Runes', label: 'Runes' },
 	{ overlayName: 'BaronPitTimer', label: 'Baron\nTimer' },
 	{ overlayName: 'DragonPitTimer', label: 'Dragon\nTimer' },
@@ -91,7 +93,7 @@ export function UpdatePresets(self: ModuleInstance): void {
 		presets[`overlay_${overlay.overlayName}`] = {
 			type: 'button',
 			category: 'Live: Overlays',
-			name: `Toggle ${overlay.overlayName} (pick your caster button in the action)`,
+			name: `Toggle ${overlay.overlayName}`,
 			style: {
 				text: overlay.label,
 				size: 'auto',
@@ -100,7 +102,7 @@ export function UpdatePresets(self: ModuleInstance): void {
 			},
 			steps: [
 				{
-					down: [{ actionId: 'casterButtonPress', options: { buttonId: '', mode: 'toggle' } }],
+					down: [{ actionId: 'overlaySet', options: { overlayKey: overlay.overlayName, mode: 'toggle' } }],
 					up: [],
 				},
 			],
@@ -112,6 +114,34 @@ export function UpdatePresets(self: ModuleInstance): void {
 				},
 			],
 		}
+	}
+
+	// One documented example for the flagship casterButtonPress action: the
+	// button layout is the operator's own, so the target button (and the
+	// matching feedback) is picked after dragging (see HELP.md).
+	presets['casterButtonExample'] = {
+		type: 'button',
+		category: 'Live: Overlays',
+		name: 'Press one of YOUR configured caster buttons (pick it in the action and feedback)',
+		style: {
+			text: 'MY\nBUTTON',
+			size: 'auto',
+			color: COLOR_WHITE,
+			bgcolor: COLOR_BLACK,
+		},
+		steps: [
+			{
+				down: [{ actionId: 'casterButtonPress', options: { buttonId: '', mode: 'toggle' } }],
+				up: [],
+			},
+		],
+		feedbacks: [
+			{
+				feedbackId: 'casterButtonActive',
+				options: { buttonId: '' },
+				style: { bgcolor: COLOR_GREEN, color: COLOR_WHITE },
+			},
+		],
 	}
 
 	presets['deactivateAll'] = {
@@ -315,14 +345,51 @@ export function UpdatePresets(self: ModuleInstance): void {
 		],
 	}
 
-	// --- 6. Status ---
+	// --- 6. Series Control ---
+
+	presets['swapSides'] = {
+		type: 'button',
+		category: 'Series Control',
+		name: 'Swap sides of the current series',
+		style: {
+			text: 'SWAP\nSIDES',
+			size: 'auto',
+			color: COLOR_WHITE,
+			bgcolor: COLOR_BLACK,
+		},
+		steps: [
+			{
+				down: [{ actionId: 'swapSides', options: { seriesId: '' } }],
+				up: [],
+			},
+		],
+		feedbacks: [],
+	}
+
+	presets['status_currentSeries'] = {
+		type: 'button',
+		category: 'Series Control',
+		name: 'Current series',
+		style: {
+			// self.label, not a hard-coded connection name: the user may have
+			// renamed the connection, and variable refs resolve against the label.
+			text: `Series\n$(${self.label}:currentSeries)`,
+			size: 'auto',
+			color: COLOR_WHITE,
+			bgcolor: COLOR_BLACK,
+		},
+		steps: [],
+		feedbacks: [],
+	}
+
+	// --- 7. Status ---
 
 	presets['status_gamePhase'] = {
 		type: 'button',
 		category: 'Status',
 		name: 'Game phase',
 		style: {
-			text: 'Phase\n$(league-broadcast:gamePhase)',
+			text: `Phase\n$(${self.label}:gamePhase)`,
 			size: 'auto',
 			color: COLOR_WHITE,
 			bgcolor: COLOR_BLACK,
@@ -336,7 +403,7 @@ export function UpdatePresets(self: ModuleInstance): void {
 		category: 'Status',
 		name: 'Team names',
 		style: {
-			text: '$(league-broadcast:blueTeamName) vs $(league-broadcast:redTeamName)',
+			text: `$(${self.label}:blueTeamName) vs $(${self.label}:redTeamName)`,
 			size: 'auto',
 			color: COLOR_WHITE,
 			bgcolor: COLOR_BLACK,
@@ -350,7 +417,7 @@ export function UpdatePresets(self: ModuleInstance): void {
 		category: 'Status',
 		name: 'Connection state',
 		style: {
-			text: 'LB\n$(league-broadcast:connectionState)',
+			text: `LB\n$(${self.label}:connectionState)`,
 			size: 'auto',
 			color: COLOR_WHITE,
 			bgcolor: COLOR_DARK_RED,
@@ -370,7 +437,7 @@ export function UpdatePresets(self: ModuleInstance): void {
 		category: 'Status',
 		name: 'Tier warning (red when Basic tier is missing)',
 		style: {
-			text: 'Tier\n$(league-broadcast:tier)',
+			text: `Tier\n$(${self.label}:tier)`,
 			size: 'auto',
 			color: COLOR_WHITE,
 			bgcolor: COLOR_BLACK,

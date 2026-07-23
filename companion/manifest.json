@@ -23,5 +23,11 @@
 	"legacyIds": [],
 	"manufacturer": "BlueBottleGG",
 	"products": ["LeagueBroadcast"],
-	"keywords": ["league of legends", "esports", "broadcast", "overlay", "graphics"]
+	"keywords": ["league of legends", "esports", "broadcast", "overlay", "graphics"],
+	"bonjourQueries": {
+		"bonjourHost": {
+			"type": "leaguebroadcast",
+			"protocol": "tcp"
+		}
+	}
 }

@@ -14,7 +14,7 @@ import type {
 	CasterPostgameButtonDto,
 	CasterRosterEntryDto,
 } from './client/lb-types.js'
-import type { MockPhase, PolledState } from './client/rest.js'
+import type { MockPhase, PolledState, SeriesSummary, SlowPolledState, StylePhase } from './client/rest.js'
 
 /**
  * GamePhase wire int → label mapping. The wire value is the app's full
@@ -51,6 +51,12 @@ export class LeagueBroadcastState {
 	activePageId = ''
 	roster: CasterRosterEntryDto[] = []
 
+	// --- slow-polled state (transition REST, 30 s cadence) ---
+	seriesList: SeriesSummary[] = []
+	/** `null` = the app reports no current series. */
+	currentSeriesId: number | null = null
+	styleSets: Record<StylePhase, string[]> = { pregame: [], ingame: [], postgame: [] }
+
 	// --- polled state (transition REST) ---
 	mockPregame: boolean | null = null
 	mockIngame: boolean | null = null
@@ -63,7 +69,13 @@ export class LeagueBroadcastState {
 	cinematicPlaying = false
 
 	// --- connection state ---
-	tierBlocked = false
+	/**
+	 * Sticky per-connection-cycle flag: the app rejected a gated call for
+	 * tier/entitlement reasons. Surfaces ONLY through the `tier` variable and
+	 * the `tierEntitled` feedback — never through the instance status (free
+	 * tier stays fully usable). Cleared exclusively by handleConnected.
+	 */
+	tierLimited = false
 	connectionState = 'disconnected'
 
 	get phaseLabel(): string {
@@ -73,6 +85,13 @@ export class LeagueBroadcastState {
 	get activePageName(): string {
 		const page = this.pages.find((p) => p.pageId === this.activePageId)
 		return page ? page.name : ''
+	}
+
+	/** Label of the current series ('' when none; the raw id when the list has no entry for it). */
+	get currentSeriesLabel(): string {
+		if (this.currentSeriesId === null) return ''
+		const series = this.seriesList.find((s) => s.id === this.currentSeriesId)
+		return series ? series.label : String(this.currentSeriesId)
 	}
 
 	isMockActive(phase: MockPhase): boolean {
@@ -111,6 +130,11 @@ export class LeagueBroadcastState {
 			[...this.knownOverlayNames()].sort(),
 			// disabledOverlays feeds the "(disabled)" suffix in caster button labels.
 			[...this.disabledOverlays].sort(),
+			// Series and style-set lists feed the seriesSelect / styleSetActivate dropdowns.
+			this.seriesList.map((s) => [s.id, s.label, s.completed]),
+			this.styleSets.pregame,
+			this.styleSets.ingame,
+			this.styleSets.postgame,
 		])
 	}
 
@@ -219,5 +243,34 @@ export class LeagueBroadcastState {
 		}
 
 		return { changedVariables, affectedFeedbacks: [...affectedFeedbacks] }
+	}
+
+	applySlowPolledState(s: SlowPolledState): StateChange {
+		const changedVariables: Record<string, string | number | undefined> = {}
+		const previousLabel = this.currentSeriesLabel
+
+		// Failed pieces (null list / undefined id) freeze the last known value
+		// instead of overwriting it (design.md §6, partial degradation).
+		if (s.seriesList !== null) {
+			this.seriesList = s.seriesList
+		}
+		if (s.currentSeriesId !== undefined) {
+			this.currentSeriesId = s.currentSeriesId
+		}
+		for (const phase of ['pregame', 'ingame', 'postgame'] as const) {
+			const names = s.styleSets[phase]
+			if (names !== null) {
+				this.styleSets[phase] = names
+			}
+		}
+
+		// The label depends on both the id and the list — recompute once after
+		// every piece has been applied.
+		const newLabel = this.currentSeriesLabel
+		if (newLabel !== previousLabel) {
+			changedVariables['currentSeries'] = newLabel
+		}
+
+		return { changedVariables, affectedFeedbacks: [] }
 	}
 }
