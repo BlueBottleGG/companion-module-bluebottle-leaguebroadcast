@@ -1,17 +1,17 @@
 {
 	"$schema": "../node_modules/@companion-module/base/assets/manifest.schema.json",
-	"id": "your-module-name",
-	"name": "your-module-name",
-	"shortname": "module-shortname",
-	"description": "A short one line description of your module",
+	"id": "league-broadcast",
+	"name": "league-broadcast",
+	"shortname": "leaguebroadcast",
+	"description": "Control LeagueBroadcast League of Legends broadcast overlays",
 	"version": "0.0.0",
 	"license": "MIT",
-	"repository": "git+https://github.com/bitfocus/companion-module-your-module-name.git",
-	"bugs": "https://github.com/bitfocus/companion-module-your-module-name/issues",
+	"repository": "git+https://github.com/BlueBottleGG/companion-module-league-broadcast.git",
+	"bugs": "https://github.com/BlueBottleGG/companion-module-league-broadcast/issues",
 	"maintainers": [
 		{
-			"name": "Your name",
-			"email": "Your email"
+			"name": "Lars Eble",
+			"email": "lars@bluebottle.gg"
 		}
 	],
 	"runtime": {
@@ -21,7 +21,7 @@
 		"entrypoint": "../dist/main.js"
 	},
 	"legacyIds": [],
-	"manufacturer": "Your company",
-	"products": ["Your product"],
-	"keywords": []
+	"manufacturer": "BlueBottleGG",
+	"products": ["LeagueBroadcast"],
+	"keywords": ["league of legends", "esports", "broadcast", "overlay", "graphics"]
 }

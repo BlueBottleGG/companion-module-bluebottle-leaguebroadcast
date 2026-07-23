@@ -1,9 +1,21 @@
 import type { ModuleInstance } from './main.js'
 
+// Variable IDs are permanent public API — frozen at v1.
+
 export function UpdateVariableDefinitions(self: ModuleInstance): void {
 	self.setVariableDefinitions([
-		{ variableId: 'variable1', name: 'My first variable' },
-		{ variableId: 'variable2', name: 'My second variable' },
-		{ variableId: 'variable3', name: 'Another variable' },
+		{
+			variableId: 'gamePhase',
+			name: 'Game phase (outofgame / loading / ingame / paused / mocking / gameover / champselect)',
+		},
+		{ variableId: 'blueTeamName', name: 'Blue team name' },
+		{ variableId: 'redTeamName', name: 'Red team name' },
+		{ variableId: 'activePage', name: 'Active caster page name' },
+		{ variableId: 'activeOverlayCount', name: 'Number of active overlays' },
+		{ variableId: 'postgameComponent', name: 'Active post-game component' },
+		{ variableId: 'hotkeysEnabled', name: 'Keyboard hotkeys enabled (on/off)' },
+		{ variableId: 'tier', name: 'Tier entitlement (ok/blocked)' },
+		{ variableId: 'appVersion', name: 'LeagueBroadcast version' },
+		{ variableId: 'connectionState', name: 'Connection state' },
 	])
 }

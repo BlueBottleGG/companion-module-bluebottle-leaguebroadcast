@@ -1,5 +1,5 @@
 {
-	"name": "your-module-name",
+	"name": "league-broadcast",
 	"version": "0.1.0",
 	"main": "dist/main.js",
 	"type": "module",
@@ -16,10 +16,10 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/bitfocus/companion-module-your-module-name.git"
+		"url": "git+https://github.com/BlueBottleGG/companion-module-league-broadcast.git"
 	},
 	"engines": {
-		"node": "^22.20",
+		"node": ">=22.20",
 		"yarn": "^4"
 	},
 	"dependencies": {
