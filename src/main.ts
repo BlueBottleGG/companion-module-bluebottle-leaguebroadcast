@@ -13,7 +13,6 @@ import {
 	type LeagueBroadcastRpc,
 	type RpcConnectionEvent,
 } from './client/rpc.js'
-import { isForbiddenError, LeagueBroadcastRest } from './client/rest.js'
 import { LeagueBroadcastCommands } from './client/commands.js'
 import type { CasterCommandResultDto, CasterPanelStateDto } from './client/lb-types.js'
 
@@ -45,15 +44,12 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 	secrets: ModuleSecrets = {}
 	state = new LeagueBroadcastState()
 	/** `null` until a host is configured — action callbacks must guard (see actions.ts). */
-	rest: LeagueBroadcastRest | null = null
-	/** `null` until a host is configured — action callbacks must guard (see actions.ts). */
 	commands: LeagueBroadcastCommands | null = null
 
 	private rpc: LeagueBroadcastRpc | null = null
 	private pollTimer: NodeJS.Timeout | null = null
 	private pollInFlight = false
 	private lastChoicesHash = ''
-	private versionFetched = false
 	/** Host the current connection cycle targets (bonjour-discovered or manual) — for status messages. */
 	private effectiveHost = ''
 	/** Port the current connection cycle targets (advertised or configured) — for status messages. */
@@ -69,7 +65,7 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 	private slowPollCountdown = 0
 	/**
 	 * Bumped by setupConnection/teardownConnection/destroy. Async continuations
-	 * (handleConnected, pollTick, fetchVersionOnce) capture it at entry and
+	 * (handleConnected and pollTick) capture it at entry and
 	 * re-check after every await — a stale cycle's landing continuation must
 	 * never touch the new cycle's state, status, or variables.
 	 */
@@ -142,7 +138,6 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 			// action callbacks must find null (and log cleanly) instead of firing
 			// stale requests at the old host. teardownConnection already dropped
 			// the rpc in the configUpdated path; the guard covers every path.
-			this.rest = null
 			this.commands = null
 			if (this.rpc) {
 				this.rpc.destroy()
@@ -158,12 +153,10 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 		this.state = new LeagueBroadcastState()
 		this.state.connectionState = 'connecting'
 		this.lastChoicesHash = this.state.choicesHash()
-		this.versionFetched = false
 		this.upgradeRejected401 = false
 		this.slowPollCountdown = 0
 		this.initVariableValues()
 
-		this.rest = new LeagueBroadcastRest(host, port)
 		const rpc = createRpcClient(host, port, this.secrets.pairingToken)
 		this.rpc = rpc
 		this.commands = new LeagueBroadcastCommands(rpc)
@@ -184,10 +177,8 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 		}
 		rpc.connect()
 
-		// The 5 s REST poll ticks only while the RPC transport is connected
-		// (pollTick self-gates on rpcConnected): the app is one process, so an
-		// unreachable RPC endpoint means REST is down too. While disconnected
-		// the polled state freezes and variables keep their last values.
+		// Poll only while the authenticated RPC transport is connected. While
+		// disconnected, variables intentionally keep their last known values.
 		this.pollTimer = setInterval(() => void this.pollTick(), POLL_INTERVAL_MS)
 	}
 
@@ -311,10 +302,6 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 		// rejection of the new cycle re-sets the flag — so a tier upgrade in
 		// the app takes effect on the next (re)connect.
 		this.clearTierLimited()
-		// Re-fetch the app version each cycle — the app may have been updated
-		// between reconnects.
-		this.versionFetched = false
-
 		// Auth/liveness probe ONLY — the result is deliberately discarded.
 		// The panel-state subscription is the authoritative state source: the
 		// server pushes a full snapshot on every (re)subscribe and the runtime
@@ -341,8 +328,6 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 			}
 		}
 
-		await this.fetchVersionOnce(generation)
-		if (generation !== this.connectionGeneration) return
 		// Kick a poll cycle immediately — the interval only ticks while
 		// connected — and make it a full one: an app restart may have changed
 		// the series/style-set lists, so the slow poll must not wait out its
@@ -401,33 +386,20 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 	private async pollTick(): Promise<void> {
 		// Poll only while the RPC transport is connected — on disconnect the
 		// polled state freezes and variables keep their last values.
-		const rest = this.rest
-		if (this.pollInFlight || !rest || !this.rpcConnected) return
+		const commands = this.commands
+		if (this.pollInFlight || !commands || !this.rpcConnected) return
 		const generation = this.connectionGeneration
 		this.pollInFlight = true
 		try {
-			const polled = await rest.fetchPolledState()
+			const status = await commands.getStatus()
 			if (generation !== this.connectionGeneration) return
-			const change = this.state.applyPolledState(polled)
+			const change = this.state.applyStatus(status)
 			if (Object.keys(change.changedVariables).length > 0) {
 				this.setVariableValues(change.changedVariables)
 			}
 			if (change.affectedFeedbacks.length > 0) {
 				this.checkFeedbacks(...change.affectedFeedbacks)
 			}
-			if (polled.sawForbidden) {
-				// 402 on the tier-gated postgame GETs is evidence of a limited
-				// tier: set the sticky flag (logged once inside markTierLimited,
-				// not every 5 s cycle), freeze the affected polled fields at
-				// their last values, and leave the instance status alone.
-				this.markTierLimited()
-			}
-			// Deliberately NO clearTierLimited here: a "clean" poll proves
-			// nothing about entitlement (several polled GETs are ungated), so
-			// clearing on it would flap the tier variable/feedback every 5 s
-			// against the gated rejections. The flag clears only in
-			// handleConnected (fresh connect cycle).
-
 			// Slow cycle (series list, current series, style sets) every
 			// SLOW_POLL_EVERY_TICKS fast ticks — those change at human speed.
 			const slowDue = this.slowPollCountdown <= 0
@@ -436,14 +408,15 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 				await this.slowPollTick(generation)
 				if (generation !== this.connectionGeneration) return
 			}
-
-			if (!this.versionFetched) {
-				await this.fetchVersionOnce(generation)
-			}
 		} catch (err) {
 			if (generation !== this.connectionGeneration) return
-			// fetchPolledState tolerates per-request failures internally; this is a safety net.
-			this.log('debug', `Poll failed: ${err instanceof Error ? err.message : String(err)}`)
+			if (isAuthError(err)) {
+				this.markAuthRequired()
+			} else if (isTierError(err)) {
+				this.markTierLimited()
+			} else {
+				this.log('debug', `Poll failed: ${err instanceof Error ? err.message : String(err)}`)
+			}
 		} finally {
 			// Only the current cycle may clear its own overlap guard — a stale
 			// cycle's landing poll must not unblock the new cycle's in-flight
@@ -456,20 +429,16 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 
 	/** One slow poll: fetch + apply series/style-set state, then rebuild dropdowns if they changed. */
 	private async slowPollTick(generation: number): Promise<void> {
-		const rest = this.rest
-		if (!rest) return
-		const slow = await rest.fetchSlowPolledState()
+		const commands = this.commands
+		if (!commands) return
+		const slow = await commands.getSlowState()
 		if (generation !== this.connectionGeneration) return
-		const change = this.state.applySlowPolledState(slow)
+		const change = this.state.applySlowState(slow)
 		if (Object.keys(change.changedVariables).length > 0) {
 			this.setVariableValues(change.changedVariables)
 		}
 		if (change.affectedFeedbacks.length > 0) {
 			this.checkFeedbacks(...change.affectedFeedbacks)
-		}
-		if (slow.sawForbidden) {
-			// Same background-evidence path as pollTick: flag only, no status.
-			this.markTierLimited()
 		}
 		this.rebuildDefinitionsIfChoicesChanged()
 	}
@@ -483,27 +452,6 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 	requestSlowRefresh(): void {
 		this.slowPollCountdown = 0
 		void this.pollTick()
-	}
-
-	private async fetchVersionOnce(generation: number): Promise<void> {
-		const rest = this.rest
-		if (this.versionFetched || !rest) return
-		try {
-			const version = await rest.getVersion()
-			if (generation !== this.connectionGeneration) return
-			if (version) {
-				this.versionFetched = true
-				this.state.appVersion = version
-				this.setVariableValues({ appVersion: version })
-			}
-		} catch (err) {
-			if (generation !== this.connectionGeneration) return
-			if (isForbiddenError(err)) {
-				this.markTierLimited()
-			} else {
-				this.log('debug', `Version fetch failed: ${err instanceof Error ? err.message : String(err)}`)
-			}
-		}
 	}
 
 	// --- connection auth (remote pairing) ---
@@ -535,7 +483,7 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 		this.checkFeedbacks('tierEntitled')
 		// One line per connection cycle (the flag only resets in
 		// handleConnected), not one per 5 s poll.
-		this.log('info', `${TIER_MESSAGE} — gated buttons and the polled post-game state stay inactive on this tier`)
+		this.log('info', `${TIER_MESSAGE} — gated controls stay inactive on this tier`)
 	}
 
 	private clearTierLimited(): void {
@@ -578,16 +526,6 @@ export class ModuleInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
 			return
 		}
 		this.log('error', `${actionId}: ${message}`)
-	}
-
-	handleRestError(actionId: string, err: unknown): void {
-		if (isForbiddenError(err)) {
-			this.markTierLimited()
-			// Same reasoning as handleCommandError's tier branch.
-			this.log('error', `${actionId}: ${TIER_MESSAGE} (${err instanceof Error ? err.message : String(err)})`)
-			return
-		}
-		this.log('error', `${actionId}: ${err instanceof Error ? err.message : String(err)}`)
 	}
 }
 

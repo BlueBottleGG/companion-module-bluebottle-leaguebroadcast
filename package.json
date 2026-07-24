@@ -1,6 +1,6 @@
 {
 	"name": "bluebottle-leaguebroadcast",
-	"version": "0.2.4",
+	"version": "0.3.0",
 	"main": "dist/main.js",
 	"type": "module",
 	"scripts": {
@@ -10,17 +10,23 @@
 		"build": "rimraf dist && run build:main",
 		"build:main": "tsc -p tsconfig.build.json",
 		"dev": "tsc -p tsconfig.build.json --watch",
+		"format:check": "prettier --check .",
 		"lint:raw": "eslint",
 		"lint": "run lint:raw .",
-		"test": "vitest run"
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage"
 	},
 	"license": "MIT",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/BlueBottleGG/companion-module-bluebottle-leaguebroadcast.git"
 	},
+	"bugs": {
+		"url": "https://github.com/BlueBottleGG/companion-module-bluebottle-leaguebroadcast/issues"
+	},
+	"homepage": "https://bluebottle.gg",
 	"engines": {
-		"node": ">=22.20",
+		"node": "^22.20",
 		"yarn": "^4"
 	},
 	"dependencies": {
@@ -31,6 +37,7 @@
 		"@companion-module/tools": "^2.6.1",
 		"@types/node": "^22.19.3",
 		"@types/ws": "^8.18.1",
+		"@vitest/coverage-v8": "4.1.10",
 		"eslint": "^9.39.2",
 		"husky": "^9.1.7",
 		"lint-staged": "^16.2.7",

@@ -1,32 +1,33 @@
 /**
  * Unit tests for the normalized store (src/state.ts): change-set reporting,
- * overlay indexing, choices-hash stability/sensitivity, freeze-on-null poll
- * semantics, and the game-phase label mapping.
+ * overlay indexing, choices-hash stability/sensitivity, authenticated status
+ * snapshots, and the game-phase label mapping.
  */
 
 import { describe, expect, it } from 'vitest'
 import { LeagueBroadcastState, PHASE_LABELS, phaseLabel } from '../state.js'
-import type { PolledState, SlowPolledState } from '../client/rest.js'
+import type { CompanionSlowStateDto, CompanionStatusDto } from '../client/lb-types.js'
 import { makeButton, makeOverlay, makePage, makePanelState, makePostgameButton } from './helpers/fixtures.js'
 
-function polled(init: Partial<PolledState> = {}): PolledState {
+function status(init: Partial<CompanionStatusDto> = {}): CompanionStatusDto {
 	return {
-		championSelectMock: null,
-		ingameMock: null,
-		postgameMock: null,
-		postgameActiveComponent: null,
-		hotkeysEnabled: null,
-		sawForbidden: false,
+		version: '7.2.7',
+		championSelectMock: false,
+		ingameMock: false,
+		postgameMock: false,
+		postgameActiveComponent: '',
+		hotkeysEnabled: false,
 		...init,
 	}
 }
 
-function slowPolled(init: Partial<SlowPolledState> = {}): SlowPolledState {
+function slowState(init: Partial<CompanionSlowStateDto> = {}): CompanionSlowStateDto {
 	return {
-		seriesList: null,
-		currentSeriesId: undefined,
-		styleSets: { pregame: null, ingame: null, postgame: null },
-		sawForbidden: false,
+		series: [],
+		currentSeriesId: 0,
+		pregameStyleSets: [],
+		ingameStyleSets: [],
+		postgameStyleSets: [],
 		...init,
 	}
 }
@@ -150,10 +151,10 @@ describe('choicesHash', () => {
 	it('is sensitive to slow-polled series and style-set lists', () => {
 		const state = new LeagueBroadcastState()
 		const before = state.choicesHash()
-		state.applySlowPolledState(
-			slowPolled({
-				seriesList: [{ id: 3, label: 'A vs B', completed: false }],
-				styleSets: { pregame: ['clean'], ingame: null, postgame: null },
+		state.applySlowState(
+			slowState({
+				series: [{ id: 3, label: 'A vs B', completed: false }],
+				pregameStyleSets: ['clean'],
 			}),
 		)
 		expect(state.choicesHash()).not.toBe(before)
@@ -168,11 +169,12 @@ describe('choicesHash', () => {
 	})
 })
 
-describe('applyPolledState', () => {
+describe('applyStatus', () => {
 	it('applies fresh values and reports variables and feedbacks', () => {
 		const state = new LeagueBroadcastState()
-		const change = state.applyPolledState(
-			polled({
+		const change = state.applyStatus(
+			status({
+				version: '7.3.0',
 				championSelectMock: true,
 				ingameMock: false,
 				postgameMock: false,
@@ -184,45 +186,38 @@ describe('applyPolledState', () => {
 		expect(state.mockPregame).toBe(true)
 		expect(state.mockIngame).toBe(false)
 		expect(state.mockPostgame).toBe(false)
-		expect(change.changedVariables).toEqual({ postgameComponent: 'scoreboard', hotkeysEnabled: 'on' })
+		expect(change.changedVariables).toEqual({
+			postgameComponent: 'scoreboard',
+			hotkeysEnabled: 'on',
+			appVersion: '7.3.0',
+		})
 		expect([...change.affectedFeedbacks].sort()).toEqual(['hotkeysEnabled', 'mockActive', 'postgameComponentActive'])
 	})
 
-	it('null pieces freeze the last known values (partial degradation)', () => {
+	it('an identical snapshot changes nothing', () => {
 		const state = new LeagueBroadcastState()
-		state.applyPolledState(
-			polled({
-				championSelectMock: true,
-				ingameMock: true,
-				postgameMock: false,
-				postgameActiveComponent: 'scoreboard',
-				hotkeysEnabled: false,
-			}),
-		)
-
-		const change = state.applyPolledState(polled()) // every piece failed → all null
+		const snapshot = status({ championSelectMock: true, postgameActiveComponent: 'scoreboard' })
+		state.applyStatus(snapshot)
+		const change = state.applyStatus(snapshot)
 
 		expect(change.changedVariables).toEqual({})
 		expect(change.affectedFeedbacks).toEqual([])
 		expect(state.mockPregame).toBe(true)
-		expect(state.mockIngame).toBe(true)
-		expect(state.mockPostgame).toBe(false)
-		expect(state.postgameActiveComponent).toBe('scoreboard')
-		expect(state.hotkeysEnabled).toBe(false)
 	})
 })
 
-describe('applySlowPolledState', () => {
+describe('applySlowState', () => {
 	it('applies series list, current series, and style sets', () => {
 		const state = new LeagueBroadcastState()
-		const change = state.applySlowPolledState(
-			slowPolled({
-				seriesList: [
+		const change = state.applySlowState(
+			slowState({
+				series: [
 					{ id: 3, label: 'A vs B', completed: false },
 					{ id: 4, label: 'C vs D', completed: true },
 				],
 				currentSeriesId: 3,
-				styleSets: { pregame: ['clean'], ingame: ['dark'], postgame: [] },
+				pregameStyleSets: ['clean'],
+				ingameStyleSets: ['dark'],
 			}),
 		)
 
@@ -232,38 +227,24 @@ describe('applySlowPolledState', () => {
 		expect(state.styleSets).toEqual({ pregame: ['clean'], ingame: ['dark'], postgame: [] })
 	})
 
-	it('failed pieces freeze the last known values', () => {
+	it('zero currentSeriesId means "no series" and clears the label', () => {
 		const state = new LeagueBroadcastState()
-		state.applySlowPolledState(
-			slowPolled({
-				seriesList: [{ id: 3, label: 'A vs B', completed: false }],
-				currentSeriesId: 3,
-				styleSets: { pregame: ['clean'], ingame: ['dark'], postgame: ['gg'] },
-			}),
-		)
-
-		const change = state.applySlowPolledState(slowPolled()) // every request failed
-
-		expect(change.changedVariables).toEqual({})
-		expect(state.seriesList).toEqual([{ id: 3, label: 'A vs B', completed: false }])
-		expect(state.currentSeriesId).toBe(3)
-		expect(state.styleSets).toEqual({ pregame: ['clean'], ingame: ['dark'], postgame: ['gg'] })
-	})
-
-	it('null currentSeriesId means "no series" and clears the label', () => {
-		const state = new LeagueBroadcastState()
-		state.applySlowPolledState(
-			slowPolled({ seriesList: [{ id: 3, label: 'A vs B', completed: false }], currentSeriesId: 3 }),
-		)
-		const change = state.applySlowPolledState(slowPolled({ currentSeriesId: null }))
+		state.applySlowState(slowState({ series: [{ id: 3, label: 'A vs B', completed: false }], currentSeriesId: 3 }))
+		const change = state.applySlowState(slowState())
 		expect(change.changedVariables).toEqual({ currentSeries: '' })
 		expect(state.currentSeriesLabel).toBe('')
 	})
 
 	it('falls back to the raw id when the list has no entry for the current series', () => {
 		const state = new LeagueBroadcastState()
-		const change = state.applySlowPolledState(slowPolled({ seriesList: [], currentSeriesId: 99 }))
+		const change = state.applySlowState(slowState({ currentSeriesId: 99 }))
 		expect(change.changedVariables).toEqual({ currentSeries: '99' })
+	})
+
+	it('filters null style-set entries from the generated wire arrays', () => {
+		const state = new LeagueBroadcastState()
+		state.applySlowState(slowState({ pregameStyleSets: ['clean', null], postgameStyleSets: [null, 'gg'] }))
+		expect(state.styleSets).toEqual({ pregame: ['clean'], ingame: [], postgame: ['gg'] })
 	})
 })
 

@@ -13,8 +13,12 @@ import type {
 	CasterPanelStateDto,
 	CasterPostgameButtonDto,
 	CasterRosterEntryDto,
+	CompanionSeriesSummaryDto,
+	CompanionSlowStateDto,
+	CompanionStatusDto,
+	MockPhase,
+	StylePhase,
 } from './client/lb-types.js'
-import type { MockPhase, PolledState, SeriesSummary, SlowPolledState, StylePhase } from './client/rest.js'
 
 /**
  * GamePhase wire int → label mapping. The wire value is the app's full
@@ -51,13 +55,13 @@ export class LeagueBroadcastState {
 	activePageId = ''
 	roster: CasterRosterEntryDto[] = []
 
-	// --- slow-polled state (transition REST, 30 s cadence) ---
-	seriesList: SeriesSummary[] = []
+	// --- slow authenticated RPC state (30 s cadence) ---
+	seriesList: CompanionSeriesSummaryDto[] = []
 	/** `null` = the app reports no current series. */
 	currentSeriesId: number | null = null
 	styleSets: Record<StylePhase, string[]> = { pregame: [], ingame: [], postgame: [] }
 
-	// --- polled state (transition REST) ---
+	// --- authenticated RPC status (5 s cadence) ---
 	mockPregame: boolean | null = null
 	mockIngame: boolean | null = null
 	mockPostgame: boolean | null = null
@@ -216,55 +220,50 @@ export class LeagueBroadcastState {
 		return { changedVariables, affectedFeedbacks }
 	}
 
-	applyPolledState(p: PolledState): StateChange {
+	applyStatus(status: CompanionStatusDto): StateChange {
 		const changedVariables: Record<string, string | number | undefined> = {}
 		const affectedFeedbacks = new Set<string>()
 
-		// null pieces mean the individual request failed — freeze the last known
-		// value instead of overwriting it (design.md §6, partial degradation).
-		if (p.championSelectMock !== null && p.championSelectMock !== this.mockPregame) {
-			this.mockPregame = p.championSelectMock
+		if (status.championSelectMock !== this.mockPregame) {
+			this.mockPregame = status.championSelectMock
 			affectedFeedbacks.add('mockActive')
 		}
-		if (p.ingameMock !== null && p.ingameMock !== this.mockIngame) {
-			this.mockIngame = p.ingameMock
+		if (status.ingameMock !== this.mockIngame) {
+			this.mockIngame = status.ingameMock
 			affectedFeedbacks.add('mockActive')
 		}
-		if (p.postgameMock !== null && p.postgameMock !== this.mockPostgame) {
-			this.mockPostgame = p.postgameMock
+		if (status.postgameMock !== this.mockPostgame) {
+			this.mockPostgame = status.postgameMock
 			affectedFeedbacks.add('mockActive')
 		}
-		if (p.postgameActiveComponent !== null && p.postgameActiveComponent !== this.postgameActiveComponent) {
-			this.postgameActiveComponent = p.postgameActiveComponent
-			changedVariables['postgameComponent'] = p.postgameActiveComponent
+		if (status.postgameActiveComponent !== this.postgameActiveComponent) {
+			this.postgameActiveComponent = status.postgameActiveComponent
+			changedVariables['postgameComponent'] = status.postgameActiveComponent
 			affectedFeedbacks.add('postgameComponentActive')
 		}
-		if (p.hotkeysEnabled !== null && p.hotkeysEnabled !== this.hotkeysEnabled) {
-			this.hotkeysEnabled = p.hotkeysEnabled
-			changedVariables['hotkeysEnabled'] = p.hotkeysEnabled ? 'on' : 'off'
+		if (status.hotkeysEnabled !== this.hotkeysEnabled) {
+			this.hotkeysEnabled = status.hotkeysEnabled
+			changedVariables['hotkeysEnabled'] = status.hotkeysEnabled ? 'on' : 'off'
 			affectedFeedbacks.add('hotkeysEnabled')
+		}
+		if (status.version !== this.appVersion) {
+			this.appVersion = status.version
+			changedVariables['appVersion'] = status.version
 		}
 
 		return { changedVariables, affectedFeedbacks: [...affectedFeedbacks] }
 	}
 
-	applySlowPolledState(s: SlowPolledState): StateChange {
+	applySlowState(s: CompanionSlowStateDto): StateChange {
 		const changedVariables: Record<string, string | number | undefined> = {}
 		const previousLabel = this.currentSeriesLabel
 
-		// Failed pieces (null list / undefined id) freeze the last known value
-		// instead of overwriting it (design.md §6, partial degradation).
-		if (s.seriesList !== null) {
-			this.seriesList = s.seriesList
-		}
-		if (s.currentSeriesId !== undefined) {
-			this.currentSeriesId = s.currentSeriesId
-		}
-		for (const phase of ['pregame', 'ingame', 'postgame'] as const) {
-			const names = s.styleSets[phase]
-			if (names !== null) {
-				this.styleSets[phase] = names
-			}
+		this.seriesList = s.series
+		this.currentSeriesId = s.currentSeriesId && s.currentSeriesId > 0 ? s.currentSeriesId : null
+		this.styleSets = {
+			pregame: s.pregameStyleSets.filter((name): name is string => name !== null),
+			ingame: s.ingameStyleSets.filter((name): name is string => name !== null),
+			postgame: s.postgameStyleSets.filter((name): name is string => name !== null),
 		}
 
 		// The label depends on both the id and the list — recompute once after

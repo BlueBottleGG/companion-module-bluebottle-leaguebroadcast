@@ -200,7 +200,7 @@ describe('panel-state subscription', () => {
 		const server = await startServer()
 		const recorder = createTransport(server, { tuning: FAST_TUNING })
 		await connect(recorder)
-		await server.waitForRequest('caster_mode.subscribe_local_panel_state')
+		await server.waitForRequest('companion.subscribe_panel_state')
 
 		server.pushPanelState({
 			revision: 7_000_000_123n, // > 2^32 — exercises the i64/bigint slot
@@ -256,7 +256,7 @@ describe('panel-state subscription', () => {
 		const server = await startServer()
 		const recorder = createTransport(server, { tuning: FAST_TUNING })
 		await connect(recorder)
-		await server.waitForRequest('caster_mode.subscribe_local_panel_state')
+		await server.waitForRequest('companion.subscribe_panel_state')
 
 		await until(() => {
 			server.pushPanelState({ revision: 1n, blueTeamName: 'Before' })
@@ -266,7 +266,7 @@ describe('panel-state subscription', () => {
 		// Hard server-side drop: the runtime must reconnect AND replay the
 		// tracked subscription without any app-level help.
 		server.killAllConnections()
-		await server.waitForRequest('caster_mode.subscribe_local_panel_state', 2)
+		await server.waitForRequest('companion.subscribe_panel_state', 2)
 		await until(() => recorder.transport.connected, 'reconnect after drop')
 
 		const state = await until(() => {
@@ -313,21 +313,62 @@ describe('execute() error mapping', () => {
 		expect(isAuthError(err)).toBe(false)
 		expect(isTierError(err)).toBe(false)
 		expect(err).toBeInstanceOf(Error)
-		expect((err as Error).message).toContain('caster_mode.execute failed')
+		expect((err as Error).message).toContain('companion.execute_caster_command failed')
 		expect((err as Error).message).toContain('internal boom')
 	})
 })
 
 describe('unary calls', () => {
-	it('getConfigJson and getActiveOverlays round-trip', async () => {
+	it('reads the authenticated Companion state snapshots', async () => {
 		const server = await startServer()
-		server.configJson = '{"casterMode":{"enabled":true}}'
 		server.activeOverlays = ['GoldGraph', 'Teamfight']
 		const recorder = createTransport(server, { tuning: FAST_TUNING })
 		await connect(recorder)
 
-		await expect(recorder.transport.getConfigJson()).resolves.toBe('{"casterMode":{"enabled":true}}')
 		await expect(recorder.transport.getActiveOverlays()).resolves.toEqual(['GoldGraph', 'Teamfight'])
+		await expect(recorder.transport.getStatus()).resolves.toEqual(server.status)
+		await expect(recorder.transport.getSlowState()).resolves.toEqual(server.slowState)
+	})
+
+	it('exposes exactly the mutation calls used by Companion', async () => {
+		const server = await startServer()
+		const recorder = createTransport(server, { tuning: FAST_TUNING })
+		await connect(recorder)
+
+		await recorder.transport.setMock('pregame', true)
+		await recorder.transport.showPostgameComponent('mvp', 'player', 1, 7)
+		await recorder.transport.clearPostgameComponent()
+		await recorder.transport.setOverlayShowing('GoldGraph', true)
+		await recorder.transport.selectSeries(3)
+		await recorder.transport.setBestOf(5)
+		await recorder.transport.setGameResult('blue', 1)
+		await recorder.transport.swapSides(3)
+		await recorder.transport.activateStyleSet('ingame', 'dark')
+		await recorder.transport.setHotkeysEnabled(false)
+		await recorder.transport.cinematicArm('intro')
+		await recorder.transport.cinematicGo()
+		await recorder.transport.cinematicPlay('outro')
+		await recorder.transport.cinematicStop()
+
+		const methods = server.requests.map((request) => request.method)
+		for (const method of [
+			'companion.set_mock',
+			'companion.show_postgame_component',
+			'companion.clear_postgame_component',
+			'companion.set_overlay_showing',
+			'companion.select_series',
+			'companion.set_best_of',
+			'companion.set_game_result',
+			'companion.swap_sides',
+			'companion.activate_style_set',
+			'companion.set_hotkeys_enabled',
+			'companion.cinematic_arm',
+			'companion.cinematic_go',
+			'companion.cinematic_play',
+			'companion.cinematic_stop',
+		]) {
+			expect(methods).toContain(method)
+		}
 	})
 })
 
@@ -336,7 +377,7 @@ describe('cinematics playback subscription', () => {
 		const server = await startServer()
 		const recorder = createTransport(server, { tuning: FAST_TUNING })
 		await connect(recorder)
-		await server.waitForRequest('cinematics.subscribe_playback')
+		await server.waitForRequest('companion.subscribe_cinematic_playback')
 
 		server.pushPlayback({ cinematicId: 'cine-7', time: 1.5, length: 12.25, state: 'playing', playing: true })
 		await until(() => recorder.playback.length >= 1, 'first playback event')

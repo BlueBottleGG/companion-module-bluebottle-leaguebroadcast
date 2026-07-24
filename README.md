@@ -8,9 +8,11 @@ control from a remote Companion host.
 
 - User documentation: [companion/HELP.md](./companion/HELP.md)
 - Release history: [CHANGELOG.md](./CHANGELOG.md)
-- System design: [docs/design.md](./docs/design.md)
-- Developer-portal checklist: [docs/developer-portal-submission.md](./docs/developer-portal-submission.md)
+- Security reports: [SECURITY.md](./SECURITY.md)
 - License: [MIT](./LICENSE)
+
+Keep both Companion and LeagueBroadcast up to date. The module follows LeagueBroadcast's current
+authenticated RPC API and cannot guarantee compatibility with older app builds.
 
 ## Development setup
 
@@ -23,6 +25,7 @@ yarn                      # install dependencies
 yarn build                # compile once (dist/)
 yarn dev                  # compile in watch mode
 yarn lint                 # eslint
+yarn test:coverage        # tests with enforced coverage thresholds
 ```
 
 The module targets `@companion-module/base` 1.14 (Companion 4.2+). Packaging for distribution is
