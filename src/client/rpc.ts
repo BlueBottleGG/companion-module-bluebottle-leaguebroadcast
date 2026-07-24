@@ -1,5 +1,5 @@
 /**
- * FlatBuffers RPC transport for LeagueBroadcast (design.md §3.3, rev 2).
+ * FlatBuffers RPC transport for LeagueBroadcast.
  *
  * Wraps the vendored @bluebottle/rpc runtime + generated namespace stubs
  * (src/vendor/) behind the stable `LeagueBroadcastRpc` seam that main.ts and
@@ -17,11 +17,20 @@
  */
 
 import WsWebSocket from 'ws'
-import type { CasterCommandDto, CasterCommandResultDto, CasterPanelStateDto } from './lb-types.js'
+import type {
+	CasterCommandDto,
+	CasterCommandResultDto,
+	CasterPanelStateDto,
+	CompanionSlowStateDto,
+	CompanionStatusDto,
+	GameWinnerSelection,
+	MockPhase,
+	PostgameScope,
+	StylePhase,
+} from './lb-types.js'
 import { formatHostForUrl } from '../config.js'
 import { FlatBufferReader, RpcClient, RpcError, type RpcClientOptions } from '../vendor/bluebottle-rpc/index.js'
-import { createCaster_modeRpc, type Caster_modeRpc } from '../vendor/generated/caster-mode-rpc.js'
-import { createCinematicsRpc, type CinematicsRpc } from '../vendor/generated/cinematics-rpc.js'
+import { createCompanionRpc, type CompanionRpc } from '../vendor/generated/companion-rpc.js'
 
 /**
  * 'invalid-url' is terminal for the connect cycle: the configured host/port
@@ -35,7 +44,7 @@ export type RpcConnectionEvent = 'connected' | 'disconnected' | 'reconnecting' |
  * Remote-only application-level heartbeat. Loopback sockets do not need a
  * liveness probe; remote sockets can otherwise remain half-open after a network
  * path silently disappears. The wire method matches the generated ping stub
- * (`ping.echo` in src/vendor/generated/ping-rpc.ts).
+ * (`ping.echo` is the server's standard liveness probe).
  */
 const HEARTBEAT_METHOD = 'ping.echo'
 const HEARTBEAT_INTERVAL_MS = 15_000
@@ -78,8 +87,8 @@ const COMPANION_ORIGIN = 'http://companion.bluebottle.invalid'
 /**
  * Thrown when the app rejects an RPC call for tier/entitlement reasons
  * (`RpcException.Unauthorized`, wire code 401 — the app throws it from
- * `caster_mode.execute` for feature-gate rejections specifically so external
- * callers can key on the code). The RPC twin of rest.ts's `isForbiddenError`.
+ * `companion.execute_caster_command` for feature-gate rejections specifically
+ * so external callers can key on the code).
  */
 export class TierError extends Error {
 	constructor(message?: string) {
@@ -88,7 +97,7 @@ export class TierError extends Error {
 	}
 }
 
-/** True when the error is a tier/entitlement rejection — mirrors rest.ts's isForbiddenError. */
+/** True when the error is a tier/entitlement rejection. */
 export function isTierError(err: unknown): boolean {
 	return err instanceof TierError
 }
@@ -110,6 +119,21 @@ export class AuthRequiredError extends Error {
 /** True when the error means the connection needs a pairing token — the auth twin of isTierError. */
 export function isAuthError(err: unknown): boolean {
 	return err instanceof AuthRequiredError
+}
+
+export class RpcRequestError extends Error {
+	constructor(
+		readonly code: number,
+		message: string,
+		options?: ErrorOptions,
+	) {
+		super(message, options)
+		this.name = 'RpcRequestError'
+	}
+}
+
+export function isBadRequestError(err: unknown): err is RpcRequestError {
+	return err instanceof RpcRequestError && err.code === 400
 }
 
 /**
@@ -143,6 +167,9 @@ function mapRpcFailure(context: string, err: unknown): Error {
 	if (isTierRpcFailure(err)) {
 		return new TierError(`${TIER_MESSAGE} (${context}: ${message})`)
 	}
+	if (err instanceof RpcError) {
+		return new RpcRequestError(err.code, `${context} failed: ${message}`, { cause: err })
+	}
 	return new Error(`${context} failed: ${message}`, { cause: err })
 }
 
@@ -173,9 +200,24 @@ export interface LeagueBroadcastRpc {
 	destroy(): void
 	readonly connected: boolean
 	execute(cmd: CasterCommandDto): Promise<CasterCommandResultDto>
-	getConfigJson(): Promise<string>
 	getActiveOverlays(): Promise<string[]>
-	// cinematics playback transport (design.md §5.4):
+	getStatus(): Promise<CompanionStatusDto>
+	getSlowState(): Promise<CompanionSlowStateDto>
+	setMock(phase: MockPhase, enabled: boolean): Promise<void>
+	showPostgameComponent(
+		componentType: string,
+		scope: PostgameScope,
+		teamSide: number,
+		playerIndex: number,
+	): Promise<void>
+	clearPostgameComponent(): Promise<void>
+	setOverlayShowing(overlayName: string, show: boolean): Promise<void>
+	selectSeries(seriesId: number): Promise<void>
+	setBestOf(bestOf: number): Promise<void>
+	setGameResult(selection: GameWinnerSelection, gameId: number): Promise<void>
+	swapSides(seriesId: number): Promise<void>
+	activateStyleSet(phase: StylePhase, name: string): Promise<void>
+	setHotkeysEnabled(enabled: boolean): Promise<void>
 	cinematicArm(id: string): Promise<void>
 	cinematicGo(): Promise<void>
 	cinematicStop(): Promise<void>
@@ -209,8 +251,7 @@ class LeagueBroadcastRpcTransport implements LeagueBroadcastRpc {
 	private readonly pairingToken: string
 	private readonly tuning: RpcTuning
 	private client: RpcClient | null = null
-	private casterMode: Caster_modeRpc | null = null
-	private cinematics: CinematicsRpc | null = null
+	private companion: CompanionRpc | null = null
 	private destroyed = false
 
 	constructor(host: string, port: number, pairingToken?: string, tuning?: RpcTuning) {
@@ -286,10 +327,8 @@ class LeagueBroadcastRpcTransport implements LeagueBroadcastRpc {
 			...this.tuning,
 		})
 		this.client = client
-		const casterMode = createCaster_modeRpc(client)
-		const cinematics = createCinematicsRpc(client)
-		this.casterMode = casterMode
-		this.cinematics = cinematics
+		const companion = createCompanionRpc(client)
+		this.companion = companion
 
 		// Subscribe once per RpcClient instance; the runtime re-issues tracked
 		// channels itself on every reconnect (do NOT resubscribe per 'connected').
@@ -298,7 +337,7 @@ class LeagueBroadcastRpcTransport implements LeagueBroadcastRpc {
 			this.onConnectionEvent?.('connected')
 			if (!subscriptionsIssued) {
 				subscriptionsIssued = true
-				void this.issueSubscriptions(casterMode, cinematics)
+				void this.issueSubscriptions(companion)
 			}
 		})
 		client.on('disconnected', () => this.onConnectionEvent?.('disconnected'))
@@ -317,8 +356,7 @@ class LeagueBroadcastRpcTransport implements LeagueBroadcastRpc {
 		this.destroyed = true
 		const client = this.client
 		this.client = null
-		this.casterMode = null
-		this.cinematics = null
+		this.companion = null
 		this.onConnectionEvent = undefined
 		this.onPanelState = undefined
 		this.onCinematicPlayback = undefined
@@ -329,100 +367,127 @@ class LeagueBroadcastRpcTransport implements LeagueBroadcastRpc {
 		client?.disconnect()
 	}
 
-	private async issueSubscriptions(casterMode: Caster_modeRpc, cinematics: CinematicsRpc): Promise<void> {
+	private async issueSubscriptions(companion: CompanionRpc): Promise<void> {
 		try {
-			const panel = await casterMode.subscribeLocalPanelState()
+			const panel = await companion.subscribePanelState()
 			panel.onEvent((state) => this.onPanelState?.(state))
 		} catch (err) {
-			this.onSubscribeError?.(
-				'caster_mode.subscribe_local_panel_state',
-				mapRpcFailure('caster_mode.subscribe_local_panel_state', err),
-			)
+			this.onSubscribeError?.('companion.subscribe_panel_state', mapRpcFailure('companion.subscribe_panel_state', err))
 		}
 
 		try {
-			const playback = await cinematics.subscribePlayback()
+			const playback = await companion.subscribeCinematicPlayback()
 			playback.onEvent((raw) => {
 				try {
 					this.onCinematicPlayback?.(decodePlaybackPlaying(raw))
 				} catch (err) {
 					this.onSubscribeError?.(
-						'cinematics.subscribe_playback',
-						mapRpcFailure('cinematics.subscribe_playback (decode)', err),
+						'companion.subscribe_cinematic_playback',
+						mapRpcFailure('companion.subscribe_cinematic_playback (decode)', err),
 					)
 				}
 			})
 		} catch (err) {
-			this.onSubscribeError?.('cinematics.subscribe_playback', mapRpcFailure('cinematics.subscribe_playback', err))
+			this.onSubscribeError?.(
+				'companion.subscribe_cinematic_playback',
+				mapRpcFailure('companion.subscribe_cinematic_playback', err),
+			)
 		}
 	}
 
-	private requireCasterMode(): Caster_modeRpc {
-		if (!this.casterMode) throw new Error('RPC transport not started (connect() not called)')
-		return this.casterMode
+	private requireCompanion(): CompanionRpc {
+		if (!this.companion) throw new Error('RPC transport not started (connect() not called)')
+		return this.companion
 	}
 
-	private requireCinematics(): CinematicsRpc {
-		if (!this.cinematics) throw new Error('RPC transport not started (connect() not called)')
-		return this.cinematics
+	private async call<T>(context: string, fn: (companion: CompanionRpc) => Promise<T>): Promise<T> {
+		try {
+			return await fn(this.requireCompanion())
+		} catch (err) {
+			throw mapRpcFailure(context, err)
+		}
 	}
 
 	async execute(cmd: CasterCommandDto): Promise<CasterCommandResultDto> {
-		try {
-			return await this.requireCasterMode().execute(cmd)
-		} catch (err) {
-			throw mapRpcFailure('caster_mode.execute', err)
-		}
-	}
-
-	async getConfigJson(): Promise<string> {
-		try {
-			const config = await this.requireCasterMode().getConfig()
-			return config.json
-		} catch (err) {
-			throw mapRpcFailure('caster_mode.get_config', err)
-		}
+		return this.call('companion.execute_caster_command', async (companion) => companion.executeCasterCommand(cmd))
 	}
 
 	async getActiveOverlays(): Promise<string[]> {
-		try {
-			const result = await this.requireCasterMode().getActiveOverlays()
-			return result.overlays.filter((name): name is string => name !== null && name !== '')
-		} catch (err) {
-			throw mapRpcFailure('caster_mode.get_active_overlays', err)
-		}
+		const result = await this.call('companion.get_active_overlays', async (companion) => companion.getActiveOverlays())
+		return result.overlays.filter((name): name is string => name !== null && name !== '')
+	}
+
+	async getStatus(): Promise<CompanionStatusDto> {
+		return this.call('companion.get_status', async (companion) => companion.getStatus())
+	}
+
+	async getSlowState(): Promise<CompanionSlowStateDto> {
+		return this.call('companion.get_slow_state', async (companion) => companion.getSlowState())
+	}
+
+	async setMock(phase: MockPhase, enabled: boolean): Promise<void> {
+		return this.call('companion.set_mock', async (companion) => companion.setMock(phase, enabled))
+	}
+
+	async showPostgameComponent(
+		componentType: string,
+		scope: PostgameScope,
+		teamSide: number,
+		playerIndex: number,
+	): Promise<void> {
+		return this.call('companion.show_postgame_component', async (companion) =>
+			companion.showPostgameComponent(componentType, scope, teamSide, playerIndex),
+		)
+	}
+
+	async clearPostgameComponent(): Promise<void> {
+		return this.call('companion.clear_postgame_component', async (companion) => companion.clearPostgameComponent())
+	}
+
+	async setOverlayShowing(overlayName: string, show: boolean): Promise<void> {
+		return this.call('companion.set_overlay_showing', async (companion) =>
+			companion.setOverlayShowing(overlayName, show),
+		)
+	}
+
+	async selectSeries(seriesId: number): Promise<void> {
+		return this.call('companion.select_series', async (companion) => companion.selectSeries(seriesId))
+	}
+
+	async setBestOf(bestOf: number): Promise<void> {
+		return this.call('companion.set_best_of', async (companion) => companion.setBestOf(bestOf))
+	}
+
+	async setGameResult(selection: GameWinnerSelection, gameId: number): Promise<void> {
+		return this.call('companion.set_game_result', async (companion) => companion.setGameResult(selection, gameId))
+	}
+
+	async swapSides(seriesId: number): Promise<void> {
+		return this.call('companion.swap_sides', async (companion) => companion.swapSides(seriesId))
+	}
+
+	async activateStyleSet(phase: StylePhase, name: string): Promise<void> {
+		return this.call('companion.activate_style_set', async (companion) => companion.activateStyleSet(phase, name))
+	}
+
+	async setHotkeysEnabled(enabled: boolean): Promise<void> {
+		return this.call('companion.set_hotkeys_enabled', async (companion) => companion.setHotkeysEnabled(enabled))
 	}
 
 	async cinematicArm(id: string): Promise<void> {
-		try {
-			await this.requireCinematics().arm(id)
-		} catch (err) {
-			throw mapRpcFailure('cinematics.arm', err)
-		}
+		return this.call('companion.cinematic_arm', async (companion) => companion.cinematicArm(id))
 	}
 
 	async cinematicGo(): Promise<void> {
-		try {
-			await this.requireCinematics().go()
-		} catch (err) {
-			throw mapRpcFailure('cinematics.go', err)
-		}
+		return this.call('companion.cinematic_go', async (companion) => companion.cinematicGo())
 	}
 
 	async cinematicStop(): Promise<void> {
-		try {
-			await this.requireCinematics().stop()
-		} catch (err) {
-			throw mapRpcFailure('cinematics.stop', err)
-		}
+		return this.call('companion.cinematic_stop', async (companion) => companion.cinematicStop())
 	}
 
 	async cinematicPlay(id: string): Promise<void> {
-		try {
-			await this.requireCinematics().play(id)
-		} catch (err) {
-			throw mapRpcFailure('cinematics.play', err)
-		}
+		return this.call('companion.cinematic_play', async (companion) => companion.cinematicPlay(id))
 	}
 }
 

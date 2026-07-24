@@ -8,7 +8,7 @@ import {
 	MOCK_PHASE_CHOICES,
 	POSTGAME_COMPONENT_CHOICES,
 } from './choices.js'
-import type { MockPhase } from './client/rest.js'
+import type { MockPhase } from './client/lb-types.js'
 
 // Feedback IDs are permanent public API — frozen at v1.
 

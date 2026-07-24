@@ -11,6 +11,8 @@ the game winner and swap blue/red sides without leaving the broadcast surface.
 - **LeagueBroadcast running and reachable.** On the same machine it works with zero extra
   configuration. Companion on a different machine (e.g. a Companion Pi) needs a pairing token —
   see [Remote control from another machine](#remote-control-from-another-machine).
+- **Current software versions.** Keep LeagueBroadcast and Companion up to date. This module uses
+  LeagueBroadcast's current authenticated RPC API and may not work with older app builds.
 - **Logged in to LeagueBroadcast.** The module rides on the entitlements of the logged-in app user.
 - **Basic tier for most overlays.** The free tier can control Scoreboard, Inhibitors, the Baron and
   Dragon pit timers, and the Twitch overlays. Everything else — including the post-game stat

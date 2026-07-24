@@ -1,13 +1,23 @@
 /**
  * Transport-agnostic command facade used by actions.ts.
  *
- * All caster-seam commands funnel through `caster_mode.Execute(CasterCommandDto)`
+ * All caster-seam commands funnel through `companion.ExecuteCasterCommand(CasterCommandDto)`
  * via the RPC client. Actions never construct DTOs or pick a transport
  * themselves — they call this facade.
  */
 
 import { randomUUID } from 'node:crypto'
-import type { CasterCommandDto, CasterCommandResultDto, CasterCommandType } from './lb-types.js'
+import type {
+	CasterCommandDto,
+	CasterCommandResultDto,
+	CasterCommandType,
+	CompanionSlowStateDto,
+	CompanionStatusDto,
+	GameWinnerSelection,
+	MockPhase,
+	PostgameScope,
+	StylePhase,
+} from './lb-types.js'
 import type { LeagueBroadcastRpc } from './rpc.js'
 
 /**
@@ -104,7 +114,60 @@ export class LeagueBroadcastCommands {
 		return this.execute({ commandType: 'postgame-show', postgameId, show: true })
 	}
 
-	// --- cinematics (cinematics.* RPC namespace, not the caster seam) ---
+	async getStatus(): Promise<CompanionStatusDto> {
+		return this.rpc.getStatus()
+	}
+
+	async getSlowState(): Promise<CompanionSlowStateDto> {
+		return this.rpc.getSlowState()
+	}
+
+	async setMock(phase: MockPhase, enabled: boolean): Promise<void> {
+		return this.rpc.setMock(phase, enabled)
+	}
+
+	async showPostgameComponent(
+		componentType: string,
+		scope: PostgameScope,
+		teamSide?: string | number,
+		playerIndex?: number,
+	): Promise<void> {
+		return this.rpc.showPostgameComponent(componentType, scope, Number(teamSide ?? -1), playerIndex ?? -1)
+	}
+
+	async clearPostgameComponent(): Promise<void> {
+		return this.rpc.clearPostgameComponent()
+	}
+
+	async setOverlayShowing(overlayName: string, show: boolean): Promise<void> {
+		return this.rpc.setOverlayShowing(overlayName, show)
+	}
+
+	async selectSeries(seriesId: string): Promise<void> {
+		return this.rpc.selectSeries(Number(seriesId))
+	}
+
+	async setBestOf(bestOf: number): Promise<void> {
+		return this.rpc.setBestOf(bestOf)
+	}
+
+	async setGameResult(selection: GameWinnerSelection, gameId?: number): Promise<void> {
+		return this.rpc.setGameResult(selection, gameId ?? 0)
+	}
+
+	async swapSides(seriesId?: string): Promise<void> {
+		return this.rpc.swapSides(Number(seriesId ?? 0))
+	}
+
+	async activateStyleSet(phase: StylePhase, name: string): Promise<void> {
+		return this.rpc.activateStyleSet(phase, name)
+	}
+
+	async setHotkeysEnabled(enabled: boolean): Promise<void> {
+		return this.rpc.setHotkeysEnabled(enabled)
+	}
+
+	// --- cinematics ---
 
 	/** Arm a cinematic: loaded and paused at its start, ready for an instant Go. */
 	async cinematicArm(id: string): Promise<void> {

@@ -2,10 +2,11 @@ name: Companion Module Checks
 
 on:
   push:
+  pull_request:
 
 jobs:
   check:
-    name: Check module
+    name: Validate module
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -14,11 +15,14 @@ jobs:
       packages: read
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: 22.x
       - run: corepack enable
       - run: yarn install --immutable
+      - run: yarn format:check
+      - run: yarn lint
+      - run: yarn test:coverage
       - run: yarn companion-module-check
       - run: yarn package

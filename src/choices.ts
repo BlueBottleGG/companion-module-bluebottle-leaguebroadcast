@@ -4,7 +4,7 @@
  */
 
 import type { DropdownChoice } from '@companion-module/base'
-import type { StylePhase } from './client/rest.js'
+import type { StylePhase } from './client/lb-types.js'
 import type { LeagueBroadcastState } from './state.js'
 
 /**

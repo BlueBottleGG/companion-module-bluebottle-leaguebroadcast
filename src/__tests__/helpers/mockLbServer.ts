@@ -27,6 +27,8 @@ import type {
 	CasterCommandResultDto,
 	CasterPanelStateDto,
 	CasterPlayerPickDto,
+	CompanionSlowStateDto,
+	CompanionStatusDto,
 } from '../../client/lb-types.js'
 import { makePanelState } from './fixtures.js'
 
@@ -39,8 +41,8 @@ const KIND_ERROR = 2
 const KIND_EVENT = 3
 
 /** Channel names the mock mints for subscriptions (returned in the subscribe response payload). */
-export const PANEL_CHANNEL = 'caster_mode.local_panel_state'
-export const PLAYBACK_CHANNEL = 'cinematics.playback'
+export const PANEL_CHANNEL = 'companion.panel_state'
+export const PLAYBACK_CHANNEL = 'companion.cinematic_playback'
 
 // ─── Generic wait helper ─────────────────────────────────────────────
 
@@ -255,16 +257,42 @@ export function buildCommandResultBuffer(v: CasterCommandResultDto): Uint8Array 
 	return w.finish(3)
 }
 
-function buildConfigJsonBuffer(json: string): Uint8Array {
-	const w = new FlatBufferWriter()
-	w.writeString(0, json)
-	return w.finish(1)
-}
-
 function buildActiveOverlaysBuffer(overlays: (string | null)[]): Uint8Array {
 	const w = new FlatBufferWriter()
 	w.writeStringVector(0, overlays)
 	return w.finish(1)
+}
+
+function buildStatusBuffer(status: CompanionStatusDto): Uint8Array {
+	const w = new FlatBufferWriter()
+	w.writeString(0, status.version)
+	w.writeBool(1, status.championSelectMock)
+	w.writeBool(2, status.ingameMock)
+	w.writeBool(3, status.postgameMock)
+	w.writeString(4, status.postgameActiveComponent)
+	w.writeBool(5, status.hotkeysEnabled)
+	return w.finish(6)
+}
+
+function buildSeriesSummary(v: CompanionSlowStateDto['series'][number]): Uint8Array {
+	const w = new FlatBufferWriter()
+	w.writeUInt(0, v.id)
+	w.writeString(1, v.label)
+	w.writeBool(2, v.completed)
+	return w.finish(3)
+}
+
+function buildSlowStateBuffer(state: CompanionSlowStateDto): Uint8Array {
+	const w = new FlatBufferWriter()
+	if (state.currentSeriesId !== undefined) w.writeUInt(0, state.currentSeriesId)
+	w.writeTableVector(
+		1,
+		state.series.map((series) => buildSeriesSummary(series)),
+	)
+	w.writeStringVector(2, state.pregameStyleSets)
+	w.writeStringVector(3, state.ingameStyleSets)
+	w.writeStringVector(4, state.postgameStyleSets)
+	return w.finish(5)
 }
 
 export interface PlaybackInit {
@@ -317,7 +345,7 @@ function decodeCasterCommand(r: FlatBufferReader): CasterCommandDto {
 	}
 }
 
-/** Decode `caster_mode.execute` request args: { cmd: table(0) }. */
+/** Decode `companion.execute_caster_command` request args: { cmd: table(0) }. */
 export function decodeExecuteArgs(payload: Uint8Array): CasterCommandDto {
 	const cmd = new FlatBufferReader(payload).readTable(0, decodeCasterCommand)
 	if (!cmd) throw new Error('Mock server: execute args missing cmd table')
@@ -358,19 +386,32 @@ export class MockLbServer {
 	readonly connections: RecordedConnection[] = []
 	/** Every decoded request frame, in arrival order (across all connections). */
 	readonly requests: RecordedRequest[] = []
-	/** Decoded CasterCommandDto of every `caster_mode.execute` call. */
+	/** Decoded CasterCommandDto of every `companion.execute_caster_command` call. */
 	readonly executeCommands: CasterCommandDto[] = []
 
 	/** Non-null → reject the next upgrade(s) with this raw HTTP status (e.g. 401). */
 	rejectUpgradeWithStatus: number | null = null
-	/** Canned `caster_mode.execute` result (used unless `executeError` is set). */
+	/** Canned command result (used unless `executeError` is set). */
 	executeResult: CasterCommandResultDto = { ok: true, error: '', entryJson: '' }
-	/** Non-null → answer `caster_mode.execute` with this error envelope instead. */
+	/** Non-null → answer the next command with this error envelope instead. */
 	executeError: { code: number; message: string } | null = null
-	/** Canned `caster_mode.get_config` JSON. */
-	configJson = '{}'
-	/** Canned `caster_mode.get_active_overlays` names. */
+	/** Canned `companion.get_active_overlays` names. */
 	activeOverlays: string[] = []
+	status: CompanionStatusDto = {
+		version: '7.3.0',
+		championSelectMock: false,
+		ingameMock: false,
+		postgameMock: false,
+		postgameActiveComponent: '',
+		hotkeysEnabled: true,
+	}
+	slowState: CompanionSlowStateDto = {
+		currentSeriesId: 1,
+		series: [{ id: 1, label: 'Blue vs Red', completed: false }],
+		pregameStyleSets: ['clean'],
+		ingameStyleSets: ['dark'],
+		postgameStyleSets: ['results'],
+	}
 
 	private readonly httpServer: Server
 	private readonly wss: WebSocketServer
@@ -414,23 +455,42 @@ export class MockLbServer {
 
 		// Canned method handlers (overridable via setHandler).
 		this.handlers.set('ping.echo', () => ({}))
-		this.handlers.set('caster_mode.get_config', () => ({ payload: buildConfigJsonBuffer(this.configJson) }))
-		this.handlers.set('caster_mode.get_active_overlays', () => ({
+		this.handlers.set('companion.get_active_overlays', () => ({
 			payload: buildActiveOverlaysBuffer(this.activeOverlays),
 		}))
-		this.handlers.set('caster_mode.execute', (req) => {
+		this.handlers.set('companion.get_status', () => ({ payload: buildStatusBuffer(this.status) }))
+		this.handlers.set('companion.get_slow_state', () => ({ payload: buildSlowStateBuffer(this.slowState) }))
+		this.handlers.set('companion.execute_caster_command', (req) => {
 			this.executeCommands.push(decodeExecuteArgs(req.payload))
 			if (this.executeError) return { error: this.executeError }
 			return { payload: buildCommandResultBuffer(this.executeResult) }
 		})
-		this.handlers.set('caster_mode.subscribe_local_panel_state', (req) => {
+		this.handlers.set('companion.subscribe_panel_state', (req) => {
 			this.panelSubscribers.add(req.connection.socket)
 			return { payload: new TextEncoder().encode(PANEL_CHANNEL) }
 		})
-		this.handlers.set('cinematics.subscribe_playback', (req) => {
+		this.handlers.set('companion.subscribe_cinematic_playback', (req) => {
 			this.playbackSubscribers.add(req.connection.socket)
 			return { payload: new TextEncoder().encode(PLAYBACK_CHANNEL) }
 		})
+		for (const method of [
+			'companion.set_mock',
+			'companion.show_postgame_component',
+			'companion.clear_postgame_component',
+			'companion.set_overlay_showing',
+			'companion.select_series',
+			'companion.set_best_of',
+			'companion.set_game_result',
+			'companion.swap_sides',
+			'companion.activate_style_set',
+			'companion.set_hotkeys_enabled',
+			'companion.cinematic_arm',
+			'companion.cinematic_go',
+			'companion.cinematic_play',
+			'companion.cinematic_stop',
+		]) {
+			this.handlers.set(method, () => ({}))
+		}
 	}
 
 	static async start(): Promise<MockLbServer> {

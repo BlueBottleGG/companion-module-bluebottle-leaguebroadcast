@@ -2,15 +2,15 @@
 // Vendored from the LeagueBroadcast repository — DO NOT HAND-EDIT; re-vendor from source.
 // Source: external/bluebottle-rpc/ts/src/index.ts (npm workspace @bluebottle/rpc)
 // Repo:   BlueBottleGG/LeagueBroadcast
-// Vendored: 2026-07-23
+// Vendored: 2026-07-24
 // Local patches: subscription rawHandler wrapped in try/catch so a deserializer or
 //   handler throw is logged instead of escaping ws.onmessage as an uncaughtException
-//   that kills the host process (TODO: upstream to @bluebottle/rpc).
+//   that kills the host process.
 // - optional RpcClientOptions.webSocketFactory so a caller can supply a WebSocket
 //   built with custom upgrade headers (Node's native WebSocket cannot set headers;
 //   the `ws` package can, and it implements the browser-style onopen/onclose/
 //   onmessage/onerror + binaryType surface this runtime relies on). Needed for
-//   remote-host pairing auth (design.md §4.2/§4.4; TODO: upstream to @bluebottle/rpc).
+//   remote-host pairing authentication.
 /**
  * @bluebottle/rpc — FlatBuffer-based RPC client runtime
  *

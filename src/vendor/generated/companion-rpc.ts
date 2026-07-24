@@ -1,14 +1,13 @@
-// @ts-nocheck — vendored verbatim; exempt from this project's tsc strictness (noUnusedLocals/noUnusedParameters).
-// Vendored from the LeagueBroadcast repository — DO NOT HAND-EDIT; re-vendor from source.
-// Source: web/shared/src/rpc/generated/caster-mode-rpc.ts (auto-generated from the C# RPC interfaces)
-// Repo:   BlueBottleGG/LeagueBroadcast
-// Vendored: 2026-07-23
-// Local change: '@bluebottle/rpc' imports rewritten to '../bluebottle-rpc/index.js'.
-// Auto-generated RPC client for caster_mode
-// DO NOT EDIT — regenerate from C# interface ICasterModeRpc
+// @ts-nocheck — generated from LeagueBroadcast's authenticated ICompanionRpc contract.
+// Regenerate in LeagueBroadcast; do not hand-edit.
+// Auto-generated RPC client for companion
+// DO NOT EDIT — regenerate from C# interface ICompanionRpc
 
 import { RpcClient, FlatBufferReader, FlatBufferWriter } from '../bluebottle-rpc/index.js';
 import type { RpcSubscription } from '../bluebottle-rpc/index.js';
+
+/** Opaque FlatBuffer type — raw bytes from the server. Use domain-specific deserializer. */
+export type CinematicPlayback = Uint8Array;
 
 export interface CasterActiveOverlayDto {
   overlayName: string;
@@ -17,7 +16,6 @@ export interface CasterActiveOverlayDto {
   team: number;
   players: CasterPlayerPickDto[];
 }
-
 export interface CasterActiveOverlaysDto {
   overlays: (string | null)[];
 }
@@ -62,10 +60,6 @@ export interface CasterCommandResultDto {
   ok: boolean;
   error: string;
   entryJson: string;
-}
-
-export interface CasterModeConfigJsonDto {
-  json: string;
 }
 
 export interface CasterPageStateDto {
@@ -116,6 +110,29 @@ export interface CasterRosterEntryDto {
   summonerName: string;
   championName: string;
   team: number;
+}
+
+export interface CompanionSeriesSummaryDto {
+  id: number;
+  label: string;
+  completed: boolean;
+}
+
+export interface CompanionSlowStateDto {
+  currentSeriesId?: number;
+  series: CompanionSeriesSummaryDto[];
+  pregameStyleSets: (string | null)[];
+  ingameStyleSets: (string | null)[];
+  postgameStyleSets: (string | null)[];
+}
+
+export interface CompanionStatusDto {
+  version: string;
+  championSelectMock: boolean;
+  ingameMock: boolean;
+  postgameMock: boolean;
+  postgameActiveComponent: string;
+  hotkeysEnabled: boolean;
 }
 
 function decodeCasterActiveOverlayDto(r: FlatBufferReader): CasterActiveOverlayDto {
@@ -182,12 +199,6 @@ function decodeCasterCommandResultDto(r: FlatBufferReader): CasterCommandResultD
   };
 }
 
-function decodeCasterModeConfigJsonDto(r: FlatBufferReader): CasterModeConfigJsonDto {
-  return {
-    json: r.readString(0) ?? '',
-  };
-}
-
 function decodeCasterPageStateDto(r: FlatBufferReader): CasterPageStateDto {
   return {
     pageId: r.readString(0) ?? '',
@@ -245,6 +256,35 @@ function decodeCasterRosterEntryDto(r: FlatBufferReader): CasterRosterEntryDto {
     summonerName: r.readString(1) ?? '',
     championName: r.readString(2) ?? '',
     team: r.readInt(3),
+  };
+}
+
+function decodeCompanionSeriesSummaryDto(r: FlatBufferReader): CompanionSeriesSummaryDto {
+  return {
+    id: r.readUInt(0),
+    label: r.readString(1) ?? '',
+    completed: r.readBool(2),
+  };
+}
+
+function decodeCompanionSlowStateDto(r: FlatBufferReader): CompanionSlowStateDto {
+  return {
+    currentSeriesId: r.readUInt(0),
+    series: r.readTableVector(1, decodeCompanionSeriesSummaryDto) ?? [],
+    pregameStyleSets: r.readStringVector(2) ?? [],
+    ingameStyleSets: r.readStringVector(3) ?? [],
+    postgameStyleSets: r.readStringVector(4) ?? [],
+  };
+}
+
+function decodeCompanionStatusDto(r: FlatBufferReader): CompanionStatusDto {
+  return {
+    version: r.readString(0) ?? '',
+    championSelectMock: r.readBool(1),
+    ingameMock: r.readBool(2),
+    postgameMock: r.readBool(3),
+    postgameActiveComponent: r.readString(4) ?? '',
+    hotkeysEnabled: r.readBool(5),
   };
 }
 
@@ -312,12 +352,6 @@ function buildCasterCommandResultDto_Args(v: CasterCommandResultDto): Uint8Array
   return writer.finish(3);
 }
 
-function buildCasterModeConfigJsonDto_Args(v: CasterModeConfigJsonDto): Uint8Array {
-  const writer = new FlatBufferWriter();
-  writer.writeString(0, v.json);
-  return writer.finish(1);
-}
-
 function buildCasterPageStateDto_Args(v: CasterPageStateDto): Uint8Array {
   const writer = new FlatBufferWriter();
   writer.writeString(0, v.pageId);
@@ -378,50 +412,253 @@ function buildCasterRosterEntryDto_Args(v: CasterRosterEntryDto): Uint8Array {
   return writer.finish(4);
 }
 
-export interface SetConfigParams {
-  update: CasterModeConfigJsonDto;
+function buildCompanionSeriesSummaryDto_Args(v: CompanionSeriesSummaryDto): Uint8Array {
+  const writer = new FlatBufferWriter();
+  writer.writeUInt(0, v.id);
+  writer.writeString(1, v.label);
+  writer.writeBool(2, v.completed);
+  return writer.finish(3);
 }
 
-export interface ExecuteParams {
+function buildCompanionSlowStateDto_Args(v: CompanionSlowStateDto): Uint8Array {
+  const writer = new FlatBufferWriter();
+  if (v.currentSeriesId != null) writer.writeUInt(0, v.currentSeriesId);
+  writer.writeTableVector(1, v.series.map((e: any) => buildCompanionSeriesSummaryDto_Args(e)));
+  writer.writeStringVector(2, v.pregameStyleSets);
+  writer.writeStringVector(3, v.ingameStyleSets);
+  writer.writeStringVector(4, v.postgameStyleSets);
+  return writer.finish(5);
+}
+
+function buildCompanionStatusDto_Args(v: CompanionStatusDto): Uint8Array {
+  const writer = new FlatBufferWriter();
+  writer.writeString(0, v.version);
+  writer.writeBool(1, v.championSelectMock);
+  writer.writeBool(2, v.ingameMock);
+  writer.writeBool(3, v.postgameMock);
+  writer.writeString(4, v.postgameActiveComponent);
+  writer.writeBool(5, v.hotkeysEnabled);
+  return writer.finish(6);
+}
+
+export interface ExecuteCasterCommandParams {
   cmd: CasterCommandDto;
 }
 
-function buildSetConfig_Args(v: SetConfigParams): Uint8Array {
-  const writer = new FlatBufferWriter();
-  writer.writeTable(0, buildCasterModeConfigJsonDto_Args(v.update));
-  return writer.finish(1);
+export interface CinematicArmParams {
+  id: string;
 }
 
-function buildExecute_Args(v: ExecuteParams): Uint8Array {
+export interface CinematicPlayParams {
+  id: string;
+}
+
+export interface SetMockParams {
+  phase: string;
+  enabled: boolean;
+}
+
+export interface ShowPostgameComponentParams {
+  componentType: string;
+  scope: string;
+  teamSide: number;
+  playerIndex: number;
+}
+
+export interface SetOverlayShowingParams {
+  overlayName: string;
+  show: boolean;
+}
+
+export interface SelectSeriesParams {
+  seriesId: number;
+}
+
+export interface SetBestOfParams {
+  bestOf: number;
+}
+
+export interface SetGameResultParams {
+  selection: string;
+  gameId: number;
+}
+
+export interface SwapSidesParams {
+  seriesId: number;
+}
+
+export interface ActivateStyleSetParams {
+  phase: string;
+  name: string;
+}
+
+export interface SetHotkeysEnabledParams {
+  enabled: boolean;
+}
+
+function buildExecuteCasterCommand_Args(v: ExecuteCasterCommandParams): Uint8Array {
   const writer = new FlatBufferWriter();
   writer.writeTable(0, buildCasterCommandDto_Args(v.cmd));
   return writer.finish(1);
 }
 
-export interface Caster_modeRpc {
-  getConfig(): Promise<CasterModeConfigJsonDto>;
-  setConfig(update: CasterModeConfigJsonDto): Promise<void>;
-  getActiveOverlays(): Promise<CasterActiveOverlaysDto>;
-  execute(cmd: CasterCommandDto): Promise<CasterCommandResultDto>;
-  subscribeLocalPanelState(): Promise<RpcSubscription<CasterPanelStateDto>>;
+function buildCinematicArm_Args(v: CinematicArmParams): Uint8Array {
+  const writer = new FlatBufferWriter();
+  writer.writeString(0, v.id);
+  return writer.finish(1);
 }
 
-export function createCaster_modeRpc(client: RpcClient): Caster_modeRpc {
+function buildCinematicPlay_Args(v: CinematicPlayParams): Uint8Array {
+  const writer = new FlatBufferWriter();
+  writer.writeString(0, v.id);
+  return writer.finish(1);
+}
+
+function buildSetMock_Args(v: SetMockParams): Uint8Array {
+  const writer = new FlatBufferWriter();
+  writer.writeString(0, v.phase);
+  writer.writeBool(1, v.enabled);
+  return writer.finish(2);
+}
+
+function buildShowPostgameComponent_Args(v: ShowPostgameComponentParams): Uint8Array {
+  const writer = new FlatBufferWriter();
+  writer.writeString(0, v.componentType);
+  writer.writeString(1, v.scope);
+  writer.writeInt(2, v.teamSide);
+  writer.writeInt(3, v.playerIndex);
+  return writer.finish(4);
+}
+
+function buildSetOverlayShowing_Args(v: SetOverlayShowingParams): Uint8Array {
+  const writer = new FlatBufferWriter();
+  writer.writeString(0, v.overlayName);
+  writer.writeBool(1, v.show);
+  return writer.finish(2);
+}
+
+function buildSelectSeries_Args(v: SelectSeriesParams): Uint8Array {
+  const writer = new FlatBufferWriter();
+  writer.writeUInt(0, v.seriesId);
+  return writer.finish(1);
+}
+
+function buildSetBestOf_Args(v: SetBestOfParams): Uint8Array {
+  const writer = new FlatBufferWriter();
+  writer.writeInt(0, v.bestOf);
+  return writer.finish(1);
+}
+
+function buildSetGameResult_Args(v: SetGameResultParams): Uint8Array {
+  const writer = new FlatBufferWriter();
+  writer.writeString(0, v.selection);
+  writer.writeUInt(1, v.gameId);
+  return writer.finish(2);
+}
+
+function buildSwapSides_Args(v: SwapSidesParams): Uint8Array {
+  const writer = new FlatBufferWriter();
+  writer.writeUInt(0, v.seriesId);
+  return writer.finish(1);
+}
+
+function buildActivateStyleSet_Args(v: ActivateStyleSetParams): Uint8Array {
+  const writer = new FlatBufferWriter();
+  writer.writeString(0, v.phase);
+  writer.writeString(1, v.name);
+  return writer.finish(2);
+}
+
+function buildSetHotkeysEnabled_Args(v: SetHotkeysEnabledParams): Uint8Array {
+  const writer = new FlatBufferWriter();
+  writer.writeBool(0, v.enabled);
+  return writer.finish(1);
+}
+
+export interface CompanionRpc {
+  executeCasterCommand(cmd: CasterCommandDto): Promise<CasterCommandResultDto>;
+  getActiveOverlays(): Promise<CasterActiveOverlaysDto>;
+  subscribePanelState(): Promise<RpcSubscription<CasterPanelStateDto>>;
+  cinematicArm(id: string): Promise<void>;
+  cinematicGo(): Promise<void>;
+  cinematicPlay(id: string): Promise<void>;
+  cinematicStop(): Promise<void>;
+  subscribeCinematicPlayback(): Promise<RpcSubscription<CinematicPlayback>>;
+  getStatus(): Promise<CompanionStatusDto>;
+  getSlowState(): Promise<CompanionSlowStateDto>;
+  setMock(phase: string, enabled: boolean): Promise<void>;
+  showPostgameComponent(componentType: string, scope: string, teamSide: number, playerIndex: number): Promise<void>;
+  clearPostgameComponent(): Promise<void>;
+  setOverlayShowing(overlayName: string, show: boolean): Promise<void>;
+  selectSeries(seriesId: number): Promise<void>;
+  setBestOf(bestOf: number): Promise<void>;
+  setGameResult(selection: string, gameId: number): Promise<void>;
+  swapSides(seriesId: number): Promise<void>;
+  activateStyleSet(phase: string, name: string): Promise<void>;
+  setHotkeysEnabled(enabled: boolean): Promise<void>;
+}
+
+export function createCompanionRpc(client: RpcClient): CompanionRpc {
   return {
-    getConfig() {
-      return client.rpc('caster_mode.get_config', {  }, undefined, (data) => decodeCasterModeConfigJsonDto(new FlatBufferReader(data)));
-    },
-    setConfig(update) {
-      return client.rpc('caster_mode.set_config', { update }, buildSetConfig_Args);
+    executeCasterCommand(cmd) {
+      return client.rpc('companion.execute_caster_command', { cmd }, buildExecuteCasterCommand_Args, (data) => decodeCasterCommandResultDto(new FlatBufferReader(data)));
     },
     getActiveOverlays() {
-      return client.rpc('caster_mode.get_active_overlays', {  }, undefined, (data) => decodeCasterActiveOverlaysDto(new FlatBufferReader(data)));
+      return client.rpc('companion.get_active_overlays', {  }, undefined, (data) => decodeCasterActiveOverlaysDto(new FlatBufferReader(data)));
     },
-    execute(cmd) {
-      return client.rpc('caster_mode.execute', { cmd }, buildExecute_Args, (data) => decodeCasterCommandResultDto(new FlatBufferReader(data)));
+    subscribePanelState() {
+      return client.subscribe('companion.subscribe_panel_state', {  }, undefined, (data) => decodeCasterPanelStateDto(new FlatBufferReader(data)));
     },
-    subscribeLocalPanelState() {
-      return client.subscribe('caster_mode.subscribe_local_panel_state', {  }, undefined, (data) => decodeCasterPanelStateDto(new FlatBufferReader(data)));
+    cinematicArm(id) {
+      return client.rpc('companion.cinematic_arm', { id }, buildCinematicArm_Args);
+    },
+    cinematicGo() {
+      return client.rpc('companion.cinematic_go', {  }, undefined);
+    },
+    cinematicPlay(id) {
+      return client.rpc('companion.cinematic_play', { id }, buildCinematicPlay_Args);
+    },
+    cinematicStop() {
+      return client.rpc('companion.cinematic_stop', {  }, undefined);
+    },
+    subscribeCinematicPlayback() {
+      return client.subscribe('companion.subscribe_cinematic_playback', {  }, undefined);
+    },
+    getStatus() {
+      return client.rpc('companion.get_status', {  }, undefined, (data) => decodeCompanionStatusDto(new FlatBufferReader(data)));
+    },
+    getSlowState() {
+      return client.rpc('companion.get_slow_state', {  }, undefined, (data) => decodeCompanionSlowStateDto(new FlatBufferReader(data)));
+    },
+    setMock(phase, enabled) {
+      return client.rpc('companion.set_mock', { phase, enabled }, buildSetMock_Args);
+    },
+    showPostgameComponent(componentType, scope, teamSide, playerIndex) {
+      return client.rpc('companion.show_postgame_component', { componentType, scope, teamSide, playerIndex }, buildShowPostgameComponent_Args);
+    },
+    clearPostgameComponent() {
+      return client.rpc('companion.clear_postgame_component', {  }, undefined);
+    },
+    setOverlayShowing(overlayName, show) {
+      return client.rpc('companion.set_overlay_showing', { overlayName, show }, buildSetOverlayShowing_Args);
+    },
+    selectSeries(seriesId) {
+      return client.rpc('companion.select_series', { seriesId }, buildSelectSeries_Args);
+    },
+    setBestOf(bestOf) {
+      return client.rpc('companion.set_best_of', { bestOf }, buildSetBestOf_Args);
+    },
+    setGameResult(selection, gameId) {
+      return client.rpc('companion.set_game_result', { selection, gameId }, buildSetGameResult_Args);
+    },
+    swapSides(seriesId) {
+      return client.rpc('companion.swap_sides', { seriesId }, buildSwapSides_Args);
+    },
+    activateStyleSet(phase, name) {
+      return client.rpc('companion.activate_style_set', { phase, name }, buildActivateStyleSet_Args);
+    },
+    setHotkeysEnabled(enabled) {
+      return client.rpc('companion.set_hotkeys_enabled', { enabled }, buildSetHotkeysEnabled_Args);
     },
   };
 }
